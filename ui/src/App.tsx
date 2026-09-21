@@ -34,6 +34,7 @@ import {
   type Graph,
   type HardwareInventory,
   type NodeDescriptor,
+  type NodeInstance,
   type SnapshotDto,
   type ValidationError,
 } from './api';
@@ -65,6 +66,10 @@ export default function App() {
   const [rejection, setRejection] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Selection is held here rather than read off the canvas, because rebuilding the
+  // canvas discards React Flow's own selection flags — which would close the inspector
+  // on every keystroke.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<TypedNodeType>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -117,8 +122,15 @@ export default function App() {
     // validation errors are merged in below instead of being rebuilt from, because a
     // rebuild resets every node to its *document* position — discarding drags that have
     // not been applied yet.
-    setNodes(toFlowNodes(graph, catalogue));
+    setNodes(
+      toFlowNodes(graph, catalogue).map((node) =>
+        node.id === selectedId ? { ...node, selected: true } : node,
+      ),
+    );
     setEdges(toFlowEdges(graph));
+    // `selectedId` is deliberately not a dependency: re-selecting should not rebuild the
+    // whole canvas, it only needs to survive a rebuild that happens for another reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, catalogue, setNodes, setEdges]);
 
   useEffect(() => {
@@ -243,6 +255,26 @@ export default function App() {
     [graph, nodes, edges],
   );
 
+  /**
+   * Replace one node in the staged document.
+   *
+   * Folds the canvas back in first, for the same reason adding does: editing from the
+   * last applied document would silently undo every drag made since.
+   */
+  const updateNode = useCallback(
+    (id: string, next: NodeInstance) => {
+      if (!graph) return;
+      const current = applyToGraph(graph, nodes, edges);
+      const position = current.nodes[id]?.position ?? next.position;
+      setLocalGraph({
+        ...current,
+        nodes: { ...current.nodes, [id]: { ...next, position } },
+      });
+      setDirty(true);
+    },
+    [graph, nodes, edges],
+  );
+
   const deleteSelected = useCallback(() => {
     if (!graph) return;
     const doomed = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
@@ -314,6 +346,7 @@ export default function App() {
           onEdgesChange(changes);
         }}
         onConnect={onConnect}
+        onSelectionChange={({ nodes: picked }) => setSelectedId(picked[0]?.id ?? null)}
         isValidConnection={isValidConnection}
         colorMode="dark"
         fitView
@@ -333,7 +366,9 @@ export default function App() {
         onApply={apply}
         onRevert={revert}
         onDelete={deleteSelected}
-        hasSelection={nodes.some((n) => n.selected)}
+        selectedId={selectedId}
+        selectedNode={selectedId ? (graph?.nodes[selectedId] ?? null) : null}
+        onChangeNode={updateNode}
       />
 
       {rejection && (

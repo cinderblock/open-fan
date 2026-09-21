@@ -24,8 +24,11 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub mod params;
+
 pub use of_core::{CurvePoint, Edge, Graph, MixMode, NodeId, NodeInstance, NodeKind, PortRef};
 pub use of_units::{Quantity, Value};
+pub use params::{ChoiceOption, ParamKind, ParamSpec, ParamUnit, params_for};
 
 /// Shorthand for the ts-rs attributes every exported type carries.
 macro_rules! dto {
@@ -66,6 +69,8 @@ dto! {
         pub template: NodeKind,
         pub inputs: Vec<PortDto>,
         pub outputs: Vec<PortDto>,
+        /// Everything about this node the user can configure.
+        pub params: Vec<ParamSpec>,
     }
 }
 
@@ -220,6 +225,7 @@ fn descriptor(category: NodeCategory, description: &str, template: NodeKind) -> 
         description: description.to_owned(),
         inputs: spec.inputs.iter().map(port_dto).collect(),
         outputs: spec.outputs.iter().map(port_dto).collect(),
+        params: params_for(&template),
         template,
     }
 }

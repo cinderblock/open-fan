@@ -7,7 +7,15 @@
  */
 import { useMemo } from 'react';
 
-import type { HardwareInventory, NodeDescriptor, SnapshotDto, ValidationError } from './api';
+import type {
+  HardwareInventory,
+  NodeDescriptor,
+  NodeInstance,
+  SnapshotDto,
+  ValidationError,
+} from './api';
+import NodeInspector from './NodeInspector';
+import { kindTag } from './graph';
 import type { NodeCategory } from './bindings/NodeCategory';
 import { ALL_QUANTITIES, styleOf } from './quantities';
 
@@ -27,11 +35,13 @@ interface Props {
   snapshot: SnapshotDto | null;
   errors: ValidationError[];
   dirty: boolean;
-  hasSelection: boolean;
+  selectedId: string | null;
+  selectedNode: NodeInstance | null;
   onAdd: (descriptor: NodeDescriptor) => void;
   onApply: () => void;
   onRevert: () => void;
   onDelete: () => void;
+  onChangeNode: (id: string, next: NodeInstance) => void;
 }
 
 function EngineStatus({
@@ -93,11 +103,13 @@ export default function Sidebar({
   snapshot,
   errors,
   dirty,
-  hasSelection,
+  selectedId,
+  selectedNode,
   onAdd,
   onApply,
   onRevert,
   onDelete,
+  onChangeNode,
 }: Props) {
   const grouped = useMemo(() => {
     const byCategory = new Map<NodeCategory, NodeDescriptor[]>();
@@ -135,7 +147,7 @@ export default function Sidebar({
         <button type="button" className="button" onClick={onRevert} disabled={!dirty}>
           Revert
         </button>
-        <button type="button" className="button" onClick={onDelete} disabled={!hasSelection}>
+        <button type="button" className="button" onClick={onDelete} disabled={!selectedId}>
           Delete node
         </button>
       </div>
@@ -151,6 +163,16 @@ export default function Sidebar({
             ))}
           </ul>
         </div>
+      )}
+
+      {selectedId && selectedNode && (
+        <NodeInspector
+          nodeId={selectedId}
+          node={selectedNode}
+          descriptor={catalogue.find((d) => d.kind === kindTag(selectedNode))}
+          inventory={hardware}
+          onChange={(next) => onChangeNode(selectedId, next)}
+        />
       )}
 
       <section className="palette">

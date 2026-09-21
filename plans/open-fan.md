@@ -352,3 +352,20 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
     (`E0255`). Commands live in `src-tauri/src/commands.rs` for this reason.
   - `OPENFAN_MOCK=1` forces the simulated backend even where real hardware exists. That is
     the safe way to exercise the UI on a machine you do not want to experiment on.
+- **2026-09-21** — Parameter editor. Node parameters are described by a **backend-published
+  schema** (`of-ipc::params`) rather than hand-written forms, for the same reason ports
+  are: adding a node kind needs no frontend change, and the two cannot disagree about what
+  is configurable. A spec's `key` is the serde field name, so applying an edit is
+  `{ ...kind, [key]: value }` with no mapping table to drift.
+  - A test asserts the spec keys **exactly** cover each variant's serialized fields, so a
+    new field cannot end up invisible and un-editable, and a renamed one cannot leave a
+    spec writing to nothing.
+  - Choice options are round-tripped through the document format in a test, so a picker
+    cannot offer a value the backend would reject on apply.
+  - Picking a sensor sets the declared `quantity` alongside the id. They fault when
+    mismatched, so setting them separately would make a dead node the normal outcome.
+  - Gotcha: ts-rs maps Rust `i64` to TypeScript `bigint`, which a number input cannot
+    consume. Editor-facing integer bounds use `i32`.
+  - Canvas selection is held in React state, not read off React Flow. Rebuilding the
+    canvas discards its selection flags, which would otherwise close the inspector on
+    every keystroke.
