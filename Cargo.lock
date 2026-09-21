@@ -2446,6 +2446,7 @@ dependencies = [
  "of-units",
  "petgraph",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 
@@ -2457,6 +2458,7 @@ dependencies = [
  "of-hal",
  "of-hal-mock",
  "of-units",
+ "parking_lot",
  "thiserror 2.0.20",
  "tracing",
 ]

@@ -1,6 +1,21 @@
 use super::*;
 use of_units::Quantity;
 
+/// Tests drive time explicitly. 0.1 s matches the engine's default 10 Hz tick.
+const DT: f64 = 0.1;
+
+/// Every test evaluates at the same fixed `dt`, so behaviour stays comparable across
+/// them and a test that cares about timing has to say so by calling `tick_with`.
+trait TickExt {
+    fn tick_t(&self, sensors: &SensorReadings, state: &mut EvalState) -> TickResult;
+}
+
+impl TickExt for CompiledGraph {
+    fn tick_t(&self, sensors: &SensorReadings, state: &mut EvalState) -> TickResult {
+        self.tick_with(sensors, DT, state)
+    }
+}
+
 fn curve(points: &[(f64, f64)]) -> NodeKind {
     NodeKind::Curve {
         input: Quantity::Temperature,
@@ -44,7 +59,7 @@ fn readings(pairs: &[(&str, Quantity, f64)]) -> SensorReadings {
 fn a_well_formed_graph_compiles_and_runs() {
     let compiled = simple_graph().validate().expect("graph should be valid");
     let mut state = EvalState::new();
-    let out = compiled.tick(
+    let out = compiled.tick_t(
         &readings(&[("cpu/package", Quantity::Temperature, 50.0)]),
         &mut state,
     );
@@ -269,7 +284,7 @@ fn a_plain_input_rejects_two_producers_but_a_mixer_accepts_many() {
     g.connect(PortRef::new("mix", "out"), PortRef::new("fan", "duty"));
 
     let compiled = g.validate().expect("variadic input takes many producers");
-    let out = compiled.tick(&SensorReadings::new(), &mut EvalState::new());
+    let out = compiled.tick_t(&SensorReadings::new(), &mut EvalState::new());
     assert_eq!(out.commands["sysfan1"].scalar, 20.0);
 }
 
@@ -313,7 +328,7 @@ fn a_missing_sensor_faults_the_channel_rather_than_commanding_a_number() {
     let compiled = simple_graph().validate().unwrap();
     let mut state = EvalState::new();
     // No reading for "cpu/package" at all.
-    let out = compiled.tick(&SensorReadings::new(), &mut state);
+    let out = compiled.tick_t(&SensorReadings::new(), &mut state);
 
     assert!(
         out.commands.is_empty(),
@@ -329,7 +344,7 @@ fn a_missing_sensor_faults_the_channel_rather_than_commanding_a_number() {
 fn a_nan_reading_does_not_get_laundered_into_a_duty() {
     let compiled = simple_graph().validate().unwrap();
     let mut state = EvalState::new();
-    let out = compiled.tick(
+    let out = compiled.tick_t(
         &readings(&[("cpu/package", Quantity::Temperature, f64::NAN)]),
         &mut state,
     );
@@ -378,7 +393,7 @@ fn one_dead_sensor_poisons_a_mix_instead_of_being_averaged_away() {
     let mut state = EvalState::new();
     // "a" reports 90 °C; "b" is dead. Averaging 90 with a substituted 0 would command a
     // dangerously low duty, which is exactly the failure this test exists to prevent.
-    let out = compiled.tick(&readings(&[("a", Quantity::Temperature, 90.0)]), &mut state);
+    let out = compiled.tick_t(&readings(&[("a", Quantity::Temperature, 90.0)]), &mut state);
 
     assert!(out.commands.is_empty());
     assert!(out.faulted_channels.contains("sysfan1"));
@@ -414,7 +429,7 @@ fn a_clamp_cannot_disguise_a_broken_reading() {
     g.connect(PortRef::new("curve", "out"), PortRef::new("fan", "duty"));
 
     let compiled = g.validate().unwrap();
-    let out = compiled.tick(&SensorReadings::new(), &mut EvalState::new());
+    let out = compiled.tick_t(&SensorReadings::new(), &mut EvalState::new());
     assert!(
         out.faulted_channels.contains("sysfan1"),
         "clamp must pass the fault through"
@@ -428,13 +443,13 @@ fn curve_holds_its_endpoints_flat_outside_the_domain() {
     let compiled = simple_graph().validate().unwrap();
     let mut state = EvalState::new();
 
-    let cold = compiled.tick(
+    let cold = compiled.tick_t(
         &readings(&[("cpu/package", Quantity::Temperature, 5.0)]),
         &mut state,
     );
     assert_eq!(cold.commands["sysfan1"].scalar, 20.0);
 
-    let hot = compiled.tick(
+    let hot = compiled.tick_t(
         &readings(&[("cpu/package", Quantity::Temperature, 120.0)]),
         &mut state,
     );
@@ -462,7 +477,7 @@ fn curve_points_need_not_be_stored_in_order() {
     g.connect(PortRef::new("curve", "out"), PortRef::new("fan", "duty"));
 
     let compiled = g.validate().unwrap();
-    let out = compiled.tick(
+    let out = compiled.tick_t(
         &readings(&[("t", Quantity::Temperature, 50.0)]),
         &mut EvalState::new(),
     );
@@ -484,7 +499,7 @@ fn rate_limit_adopts_its_first_value_then_ramps() {
         "limit",
         NodeKind::RateLimit {
             quantity: Quantity::Duty,
-            max_delta_per_tick: 5.0,
+            max_delta_per_second: 50.0,
         },
     );
     g.insert(
@@ -501,13 +516,13 @@ fn rate_limit_adopts_its_first_value_then_ramps() {
     let mut state = EvalState::new();
 
     // First tick adopts immediately — a fresh start must not ramp up from zero.
-    let first = compiled.tick(&readings(&[("t", Quantity::Temperature, 55.0)]), &mut state);
+    let first = compiled.tick_t(&readings(&[("t", Quantity::Temperature, 55.0)]), &mut state);
     assert_eq!(first.commands["f"].scalar, 50.0);
 
     // A step to 100 % is then limited to 5 points per tick.
-    let second = compiled.tick(&readings(&[("t", Quantity::Temperature, 80.0)]), &mut state);
+    let second = compiled.tick_t(&readings(&[("t", Quantity::Temperature, 80.0)]), &mut state);
     assert_eq!(second.commands["f"].scalar, 55.0);
-    let third = compiled.tick(&readings(&[("t", Quantity::Temperature, 80.0)]), &mut state);
+    let third = compiled.tick_t(&readings(&[("t", Quantity::Temperature, 80.0)]), &mut state);
     assert_eq!(third.commands["f"].scalar, 60.0);
 }
 
@@ -518,7 +533,7 @@ fn stale_node_state_is_dropped_when_the_graph_changes() {
         "limit",
         NodeKind::RateLimit {
             quantity: Quantity::Duty,
-            max_delta_per_tick: 5.0,
+            max_delta_per_second: 50.0,
         },
     );
     g.insert(
@@ -532,7 +547,7 @@ fn stale_node_state_is_dropped_when_the_graph_changes() {
 
     let compiled = g.validate().unwrap();
     let mut state = EvalState::new();
-    compiled.tick(&SensorReadings::new(), &mut state);
+    compiled.tick_t(&SensorReadings::new(), &mut state);
     assert_eq!(state.nodes.len(), 2);
 
     let empty = Graph::default();
@@ -546,7 +561,7 @@ fn stale_node_state_is_dropped_when_the_graph_changes() {
 #[test]
 fn wire_values_are_reported_for_the_ui() {
     let compiled = simple_graph().validate().unwrap();
-    let out = compiled.tick(
+    let out = compiled.tick_t(
         &readings(&[("cpu/package", Quantity::Temperature, 50.0)]),
         &mut EvalState::new(),
     );

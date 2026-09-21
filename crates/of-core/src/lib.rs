@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use of_units::{Quantity, Value};
 use serde::{Deserialize, Serialize};
 
-pub use node::{MixMode, NodeKind, PortSpec};
+pub use node::{Compare, CurvePoint, MixMode, NodeKind, NodeSpec, PortSpec, TickInput};
 
 /// Identifier for a node instance. Strings, because they round-trip to the editor and
 /// survive being hand-edited in a saved profile.
@@ -154,6 +154,34 @@ impl Graph {
 
     pub fn connect(&mut self, from: PortRef, to: PortRef) {
         self.edges.push(Edge { from, to });
+    }
+
+    /// Every hardware channel this graph drives.
+    ///
+    /// The engine acquires exactly this set, so a channel can never end up held without
+    /// a node responsible for it — or driven by a node the engine never acquired.
+    pub fn output_channels(&self) -> BTreeSet<String> {
+        self.nodes
+            .values()
+            .filter_map(|n| match &n.kind {
+                NodeKind::FanOutput { channel } => Some(channel.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every sensor this graph reads, with the quantity each is declared as.
+    pub fn required_sensors(&self) -> BTreeMap<String, Quantity> {
+        self.nodes
+            .values()
+            .filter_map(|n| match &n.kind {
+                NodeKind::Sensor {
+                    sensor_id,
+                    quantity,
+                } => Some((sensor_id.clone(), *quantity)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Look up the declared type and direction of a port, if it exists.
@@ -329,12 +357,24 @@ impl CompiledGraph {
         &self.order
     }
 
+    /// Evaluate one tick against sensor readings and an elapsed time.
+    ///
+    /// Convenience wrapper over [`CompiledGraph::tick`] for the common case.
+    pub fn tick_with(
+        &self,
+        sensors: &SensorReadings,
+        dt: f64,
+        state: &mut EvalState,
+    ) -> TickResult {
+        self.tick(&TickInput { sensors, dt }, state)
+    }
+
     /// Evaluate one tick.
     ///
     /// Total by construction: a compiled graph always produces a result. Individual
     /// channels can still *fault* (see [`TickResult::faulted_channels`]) when a sensor
     /// reads NaN or a node produces a non-finite value; that is reported, never panicked.
-    pub fn tick(&self, sensors: &SensorReadings, state: &mut EvalState) -> TickResult {
+    pub fn tick(&self, ctx: &TickInput<'_>, state: &mut EvalState) -> TickResult {
         let mut result = TickResult::default();
         // Values produced by each output port this tick.
         let mut outputs: BTreeMap<PortRef, Value> = BTreeMap::new();
@@ -359,7 +399,7 @@ impl CompiledGraph {
             }
 
             let node_state = state.entry(id.clone());
-            let produced = instance.kind.eval(&inputs, sensors, node_state);
+            let produced = instance.kind.eval(&inputs, ctx, node_state);
 
             for (key, value) in produced.outputs {
                 let r = PortRef::new(id.clone(), key);
@@ -407,3 +447,6 @@ impl EvalState {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod node_tests;

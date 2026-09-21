@@ -13,3 +13,7 @@ of-units = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 petgraph = { workspace = true }
+
+[dev-dependencies]
+# Profiles are persisted as JSON; the catalogue round-trip test needs it.
+serde_json = { workspace = true }
