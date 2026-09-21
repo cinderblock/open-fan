@@ -22,13 +22,19 @@ allow = [
     "CC0-1.0",
     "MPL-2.0",         # file-level copyleft; safe to link, must stay unmodified
     "BSL-1.0",
-    "OpenSSL",
 ]
 confidence-threshold = 0.9
 
 [bans]
+# Duplicate versions are a size and audit-surface annoyance, not a correctness problem,
+# and we do not control Tauri's dependency tree. Currently: winreg 0.10 via
+# tauri-plugin-autostart and 0.55 via tauri-build.
 multiple-versions = "warn"
+# Catch a third-party dependency pinned at "*", which would let an unreviewed major
+# version arrive silently. Our own crates are path dependencies and therefore carry no
+# version by design, so they are exempt rather than being reported as violations.
 wildcards = "deny"
+allow-wildcard-paths = true
 
 # WinRing0 is the abandoned ring-0 shim that Defender flags under CVE-2020-14979. No
 # crate wrapping it may ever enter this dependency graph — see plans/open-fan.md.
