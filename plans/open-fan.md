@@ -481,6 +481,44 @@ Four read-only examples, all of which need elevation:
 `nct-dump` is how the fixture in `crates/of-hal-pawnio/tests/fixtures/` was made. Anyone
 adding a second chip should start by capturing one.
 
+### Proof the app itself uses the real backend
+
+`src-tauri` selecting the backend was the one piece written this session that the
+`read-sensors` example does not exercise, so it was run for real. Elevated debug build,
+25+ seconds, with the other two hardware tools still running:
+
+```
+INFO open_fan_lib::state: found real hardware backend=Nuvoton NCT6798D
+INFO open_fan_lib::state: starting control loop backend=Nuvoton NCT6798D
+```
+
+No warnings or errors after that, and 0.2 CPU-seconds over the run. The engine ticked at
+10 Hz against real silicon, reading real sensors, holding no channel and writing nothing —
+`acquire` refuses, so there is nothing for the failsafe path to do yet.
+
+**Coexistence verified under load.** With four readers on the LPC bus at once — the OpenFan
+engine at 10 Hz, a separate `read-sensors` process, and both other vendor tools — every
+read stayed consistent and took 0.4–0.6 ms, with no timeouts and no garbage values. All
+three applications stayed responsive. The ISA bus mutex does what it claims.
+
+Not yet proven, because it needs writes: that closing the window keeps control running,
+and that quitting from the tray hands a header back to firmware.
+
+### Environment differences on `Quasar` vs the dev box
+
+- **Bun is 1.3.6 here, 1.4.2 on `Noook`.** Running `bun install` on this machine rewrites
+  `bun.lock` from `lockfileVersion: 2` down to `1`. That is a lockfile *downgrade* and
+  should not be committed — it was reverted. Either align Bun versions or expect this
+  churn whenever the UI is built on this machine.
+- `ui/node_modules` was absent; `bun install` is needed before `bun run build`.
+- **The compute broker is not installed here.** `node ~/.claude/bin/cpu-slots.mjs` does not
+  exist on `Quasar` (`MODULE_NOT_FOUND`), so the build guidance in `CLAUDE.md` applies to
+  the dev box only. Plain `cargo build` on a 5950X is fast enough that this does not
+  matter much.
+- Running anything that touches hardware needs elevation, including `cargo test` if
+  hardware-gated tests are ever added. The examples are all launched via
+  `Start-Process -Verb RunAs`.
+
 ### Hardware facts about the dev box (`Noook`)
 
 Recorded so a future session does not re-derive them: `Win32_Fan` returns three useless
