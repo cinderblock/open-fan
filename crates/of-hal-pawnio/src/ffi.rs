@@ -57,6 +57,13 @@ pub enum PawnIoError {
     #[error("PawnIOLib is missing the {0} export; the installed version may be too old")]
     MissingExport(&'static str),
 
+    #[error(
+        "PawnIO refused access (E_ACCESSDENIED). Its driver only accepts a handle from an \
+         elevated process, so OpenFan must run as administrator to read sensors or control \
+         fans at all."
+    )]
+    AccessDenied,
+
     #[error("PawnIO call {call} failed (HRESULT 0x{hresult:08X})")]
     Call {
         call: &'static str,
@@ -83,11 +90,15 @@ pub enum PawnIoError {
 
 type Result<T> = std::result::Result<T, PawnIoError>;
 
+/// `E_ACCESSDENIED`. PawnIO returns this for every call made from a process that is not
+/// elevated, so it is worth recognising rather than printing as a hex code.
+const E_ACCESSDENIED: Hresult = 0x8007_0005u32 as Hresult;
+
 fn check(call: &'static str, hr: Hresult) -> Result<()> {
-    if hr >= 0 {
-        Ok(())
-    } else {
-        Err(PawnIoError::Call { call, hresult: hr })
+    match hr {
+        hr if hr >= 0 => Ok(()),
+        E_ACCESSDENIED => Err(PawnIoError::AccessDenied),
+        hr => Err(PawnIoError::Call { call, hresult: hr }),
     }
 }
 
@@ -295,11 +306,25 @@ pub fn library_version() -> Result<(u16, u8, u8)> {
     ))
 }
 
+/// The per-user directory holding downloaded module blobs.
+///
+/// PawnIO's modules are LGPL-2.1 and not ours to redistribute, so they are fetched from
+/// the upstream release rather than bundled. They land here: a user-writable location
+/// needing no administrator rights and surviving a reinstall of either PawnIO or OpenFan.
+///
+/// Deliberately the *local* data directory, not the roaming one. These are signed
+/// binaries matched to the hardware in this machine; syncing them onto a different
+/// machine via a roaming profile is at best pointless and at worst confusing.
+pub fn module_cache_dir() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("", "", "OpenFan")
+        .map(|dirs| dirs.data_local_dir().join("pawnio-modules"))
+}
+
 /// Directories searched for signed module blobs, best first.
 ///
-/// Ours come first so a user can pin a specific module version alongside OpenFan without
-/// touching the PawnIO installation, which may be managed by an installer or another
-/// application.
+/// Ours come before the PawnIO installation so a module version we have actually tested
+/// wins over whatever else may have been dropped into a shared directory by another
+/// application or an installer.
 pub fn module_search_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
 
@@ -309,6 +334,8 @@ pub fn module_search_dirs() -> Vec<std::path::PathBuf> {
         dirs.push(exe_dir.join("modules"));
         dirs.push(exe_dir.to_path_buf());
     }
+
+    dirs.extend(module_cache_dir());
 
     for install in resolve::install_dirs() {
         dirs.push(install.join("modules"));
@@ -544,7 +571,18 @@ mod tests {
     fn failing_hresults_are_recognised() {
         assert!(check("t", 0).is_ok());
         assert!(check("t", 1).is_ok(), "S_FALSE is a success code");
-        let err = check("t", 0x8007_0005u32 as i32).unwrap_err();
-        assert!(err.to_string().contains("80070005"), "{err}");
+
+        // An unrecognised failure still surfaces its code, so it can be looked up.
+        let err = check("t", 0x8007_001Fu32 as i32).unwrap_err();
+        assert!(err.to_string().contains("8007001F"), "{err}");
+    }
+
+    #[test]
+    fn access_denied_is_reported_as_needing_elevation() {
+        // The very first thing a non-elevated run hits. "HRESULT 0x80070005" reads as a
+        // bug in us; "must run as administrator" is the actual, actionable cause.
+        let err = check("pawnio_open", E_ACCESSDENIED).unwrap_err();
+        assert!(matches!(err, PawnIoError::AccessDenied), "{err}");
+        assert!(err.to_string().contains("administrator"), "{err}");
     }
 }

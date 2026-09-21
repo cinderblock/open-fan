@@ -307,6 +307,127 @@ curve is what is actually loaded in the chip, before the first `acquire()` is tr
 capture restorable firmware state.** Two writers on the same PWM registers is also simply
 unsafe regardless of what we record.
 
+### Talking to the NCT6798D: elevation, the ISA mutex, and the `LpcIO` ABI
+
+Confirmed by experiment on `Quasar`, 2026-09-21. Chip identification is no longer derived
+from another tool's config — we read it ourselves: **chip ID `0xD42B` at slot 0
+(`0x2E`/`0x2F`), a Nuvoton NCT6798D.** Slot 1 is empty. Two independent sources now agree
+on the chip.
+
+**PawnIO requires an elevated caller.** Every call from an unprivileged process fails
+`pawnio_open` with `E_ACCESSDENIED` (`0x80070005`). Not a permissions quirk to work
+around — it is the design, and it means *OpenFan cannot read a single sensor without
+running as administrator*. Consequences:
+
+- First-run has a third distinct failure mode, alongside "no driver" and "no module":
+  "not elevated". `PawnIoError::AccessDenied` now says so in words.
+- This is real evidence for **Open Question 2 (run as a service)**. A service runs
+  elevated in session 0 by definition and would remove the UAC prompt entirely, control
+  fans before any login, and survive logoff. The counter-evidence — that some GPU sensor
+  APIs are restricted from session 0 — is unaffected by anything found here. The
+  recommendation in Open Questions still holds, with more weight behind it.
+
+**Every `LpcIO` ioctl requires the ISA bus mutex**, `Global\Access_ISABUS.HTP.Method`
+(`\BaseNamedObjects\...` in NT naming), and the module's documentation says so on all
+seven entry points. This is not advisory. Super I/O access is index-then-data against a
+chip with one index register, so an interleaved access from another process makes us read
+*the wrong register* — and a plausible temperature from the wrong register is the worst
+possible output, far worse than a failed read. Implemented in `of-hal-pawnio/src/isa.rs`,
+held for the lifetime of an `LpcIo` so a whole batched read is one uninterrupted
+transaction.
+
+`WAIT_ABANDONED` is treated as successfully acquired: a third-party tool that crashed
+while holding the mutex must not be able to lock us out of controlling the fans forever.
+
+Note the limit — ASUS's `AsIO` driver holds a **kernel** mutex that user mode cannot
+acquire, so this does not serialise us against Armoury Crate on the EC ports
+`0x25C`/`0x25D`. Avoid contending for those rather than trying to lock them.
+
+The module's published ABI, learned from its LGPL source's interface documentation (facts
+about an interface, not its implementation):
+
+| ioctl | in | out |
+| --- | --- | --- |
+| `ioctl_select_slot` | slot: 0 → `0x2E`/`0x2F`, 1 → `0x4E`/`0x4F` | — |
+| `ioctl_find_bars` | — | — |
+| `ioctl_pio_inb` / `ioctl_pio_outb` | port [, value] | value / — |
+| `ioctl_superio_inb` / `ioctl_superio_inw` | register | value |
+| `ioctl_superio_outb` | register, value | — |
+
+Two things the module does **not** do for you: it never enters configuration mode (the
+vendor unlock sequence is ours to send — `0x87` twice for Nuvoton, `0xAA` to leave), and
+it restricts port access to the selected index/data pair, the ASUS EC ports, and base
+addresses found by `ioctl_find_bars`. That restriction is a useful backstop: a bug in our
+port arithmetic cannot reach an arbitrary I/O port.
+
+### Modules: where they live, and whether to fetch them at runtime
+
+`LpcIO.bin` taken from `namazso/PawnIO.Modules` release **0.2.11**
+(`b3896a1cab0d808fca31fe2ebcae045d59dac690da87b17c858bb8da357eb45e`), installed to
+`%LOCALAPPDATA%\OpenFan\data\pawnio-modules\`. Deliberately the *local* app-data
+directory, not roaming: these are signed binaries for the hardware in this machine, and
+roaming them onto another is pointless. Search order is our own directories first, then
+the PawnIO installation, so a version we have tested beats one another installer dropped
+in a shared location.
+
+**Decision — runtime download is reasonable, with conditions.** Asked whether OpenFan
+should fetch a missing module itself. It should, because the strongest objection does not
+apply: PawnIO's signed edition verifies the module signature *in the kernel*, so a
+tampered or corrupted blob simply will not load and we do not have to trust the transport.
+Fetching from upstream also avoids us redistributing an LGPL-2.1 blob. The conditions:
+
+- **User-initiated, never automatic.** A silent network fetch from a fan controller is
+  surprising, and surprising a user is how trust in a tool with kernel access is lost.
+- **Version-pinned, with a hash we ship.** "Latest" is not a dependency.
+- **Never on the control path.** The engine must start, fail honestly, and keep any
+  channels it already holds; a fan controller that blocks startup on the network has
+  failed at its one job. Offline and locked-down machines are normal.
+- Missing module stays a clean degraded state, not an error dialogue.
+
+### Other applications are on the bus, and handling that is a product feature
+
+The user's decision: **do not stop the other tools.** Detecting that another application
+is contending for fan control, reporting it clearly, and offering to shut it down
+*reliably* is wanted as a **high-priority feature**, not a bring-up inconvenience. This
+lands in the backlog and shapes Phase 4.
+
+That means coexistence has to be engineered, not assumed:
+
+- The ISA mutex above is the mechanism for *register-level* coexistence, and is mandatory.
+- It does **not** stop another tool from also driving PWM. Two controllers writing the
+  same channel produces a tug-of-war neither reports.
+- **Consequence for `acquire()` that has not gone away:** with another controller live,
+  the state we capture is *its* manual mode, not the firmware's. Restoring that is not
+  "handing back to firmware". Until the headers are genuinely unowned — realistically,
+  after stopping the other controller and rebooting — `can_restore_firmware_control()`
+  cannot honestly return `true` for this machine.
+
+### The reference machine's fan loadout (confirmed by the user)
+
+Of the three wired headers, **only two have anything plugged into them**, which changes
+the risk calculus for first writes:
+
+| Channel | Tach | What is on it | Observed |
+| --- | --- | --- | --- |
+| `control/0` | `fan/0` | **nothing** | 76.9 % commanded, **0 RPM** |
+| `control/1` | `fan/1` | the machine's **only case/CPU fan** | 45.8 % → 1477 RPM |
+| `control/4` | `fan/4` | **AIO pump**, deliberately held at a fixed slow speed | 23.5 % → 2150 RPM (closed-loop to a 2200 RPM target) |
+
+Useful consequences:
+
+- **`control/0` is the correct first write target.** An empty header cannot stall, cannot
+  stop cooling anything, and has no thermal consequence whatsoever. It still exercises the
+  entire read → record → restore → write path. There is no reason to make a first write on
+  a loaded header.
+- **`control/1` is the only fan actually cooling the CPU.** Treat its stall point as
+  precious and approach it downward, slowly, only with the user present.
+- **`control/4` is a pump and is off-limits for exploration.** It is *intentionally* slow,
+  so "low RPM" here is not a fault to be corrected — and anything that reads the pump as a
+  stalled fan and "helpfully" ramps or stops it is a bug with liquid-cooling consequences.
+  A pump needs its own channel class, not fan heuristics.
+- The 45.8 % → 1477 RPM and 23.5 % → 2150 RPM pairs are live cross-checks for the register
+  decode, available without a side-by-side HWiNFO run.
+
 ### Hardware facts about the dev box (`Noook`)
 
 Recorded so a future session does not re-derive them: `Win32_Fan` returns three useless
@@ -343,6 +464,13 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
 
 ## Backlog (captured from the initial brief, not yet scheduled)
 
+- **Contention with other fan control software (high priority, user-requested).** Detect
+  that another application is driving the same headers, surface it plainly in the UI, and
+  offer to shut it down *reliably*. Register-level coexistence via the ISA bus mutex is
+  necessary but nowhere near sufficient — it stops corrupted reads, not two controllers
+  fighting over the same PWM channel. Needs: identifying the competing process, detecting
+  a duty we did not command, and an honest `can_restore_firmware_control()` that returns
+  `false` while a header is contended. See the Findings entry for the reference machine.
 - Detection of limit cycling with automatic mitigation (add damping / slow rate of change).
 - Case visualizer — sensor placement in the case and loop topology, possibly 3D.
 - True servo controllers.

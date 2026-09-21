@@ -14,6 +14,11 @@ thiserror = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 libloading = "0.9.0"
+# Locates the per-user module cache. PawnIO's hardware modules are a separate download
+# that we must not redistribute, so they are fetched to a user directory, not bundled.
+directories = { workspace = true }
+# Only for the ISA-bus arbitration mutex that every LpcIO ioctl requires; see src/isa.rs.
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 # Used only to find where PawnIO was installed: the installer puts PawnIOLib.dll in a
 # directory that is on no search path, so a bare LoadLibrary cannot find it.
 windows-registry = "0.100.0"

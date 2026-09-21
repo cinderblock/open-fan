@@ -24,9 +24,15 @@
 
 #[cfg(windows)]
 mod ffi;
+#[cfg(windows)]
+pub mod isa;
+#[cfg(windows)]
+pub mod lpc;
 
 #[cfg(windows)]
-pub use ffi::{PawnIo, PawnIoError, is_available, library_version, module_search_dirs};
+pub use ffi::{
+    PawnIo, PawnIoError, is_available, library_version, module_cache_dir, module_search_dirs,
+};
 
 #[cfg(not(windows))]
 compile_error!(
