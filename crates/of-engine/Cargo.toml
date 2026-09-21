@@ -1,0 +1,19 @@
+[package]
+name = "of-engine"
+description = "The OpenFan control engine: tick loop, safety supervisor and watchdog."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+of-core = { workspace = true }
+of-hal = { workspace = true }
+of-units = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+of-hal-mock = { workspace = true }

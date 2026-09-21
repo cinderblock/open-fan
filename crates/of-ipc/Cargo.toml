@@ -1,0 +1,15 @@
+[package]
+name = "of-ipc"
+description = "Shared DTOs between the OpenFan backend and its UI, with TypeScript emitted via ts-rs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+of-core = { workspace = true }
+of-units = { workspace = true, features = ["ts"] }
+serde = { workspace = true }
+ts-rs = { workspace = true }

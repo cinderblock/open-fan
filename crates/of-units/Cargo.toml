@@ -1,0 +1,19 @@
+[package]
+name = "of-units"
+description = "Physical quantities and the typed-port system for OpenFan graphs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+ts-rs = { workspace = true, optional = true }
+
+[features]
+default = []
+# Emit TypeScript definitions for the frontend.
+ts = ["dep:ts-rs"]

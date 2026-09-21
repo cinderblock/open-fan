@@ -1,0 +1,12 @@
+[package]
+name = "of-hal"
+description = "Hardware abstraction traits for OpenFan: sensor sources, output channels, discovery."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }

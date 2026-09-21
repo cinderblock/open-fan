@@ -1,0 +1,26 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / Bun
+node_modules/
+ui/dist/
+.vite/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Generated TypeScript bindings (emitted by ts-rs from of-ipc)
+ui/src/bindings/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# Local runtime state — never commit a user's profiles or logs
+/local/
+*.log

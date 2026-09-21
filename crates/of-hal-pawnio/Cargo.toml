@@ -1,0 +1,16 @@
+[package]
+name = "of-hal-pawnio"
+description = "PawnIO-backed hardware access for OpenFan: Super I/O and EC sensors and PWM on Windows."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+of-hal = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.9.0"

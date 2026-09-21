@@ -1,0 +1,15 @@
+[package]
+name = "of-core"
+description = "OpenFan graph model, node catalogue and evaluator. No I/O, no async, no clock."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+of-units = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+petgraph = { workspace = true }
