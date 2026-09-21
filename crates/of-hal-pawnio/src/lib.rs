@@ -28,6 +28,8 @@ mod ffi;
 pub mod isa;
 #[cfg(windows)]
 pub mod lpc;
+#[cfg(windows)]
+pub mod nct6775;
 
 #[cfg(windows)]
 pub use ffi::{
