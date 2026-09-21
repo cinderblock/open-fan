@@ -126,7 +126,10 @@ pub fn apply_tick(
         .cloned()
         .collect::<Vec<_>>();
 
-    for channel in needs_failsafe.into_iter().chain(tick.faulted_channels.iter().cloned()) {
+    for channel in needs_failsafe
+        .into_iter()
+        .chain(tick.faulted_channels.iter().cloned())
+    {
         if applied.failsafed.contains_key(&channel) {
             continue;
         }
@@ -170,7 +173,9 @@ pub fn dying_breath(policy: &SafetyPolicy, backend: &mut dyn OutputChannel) -> A
             // Try full duty before giving up on this channel.
             Err(_) => {
                 if backend.set_duty(&channel, 100.0).is_ok() {
-                    applied.failsafed.insert(channel, FailsafeAction::FixedDuty(100.0));
+                    applied
+                        .failsafed
+                        .insert(channel, FailsafeAction::FixedDuty(100.0));
                 } else {
                     applied.write_errors.push(channel);
                 }
@@ -205,7 +210,10 @@ mod tests {
     fn policy() -> SafetyPolicy {
         SafetyPolicy::new().with_channel(
             MockBackend::CHANNEL,
-            ChannelPolicy { failsafe: FailsafeAction::RestoreFirmware, floor_duty: 20.0 },
+            ChannelPolicy {
+                failsafe: FailsafeAction::RestoreFirmware,
+                floor_duty: 20.0,
+            },
         )
     }
 
@@ -228,7 +236,12 @@ mod tests {
                 ],
             },
         );
-        g.insert("fan", NodeKind::FanOutput { channel: MockBackend::CHANNEL.into() });
+        g.insert(
+            "fan",
+            NodeKind::FanOutput {
+                channel: MockBackend::CHANNEL.into(),
+            },
+        );
         g.connect(PortRef::new("t", "out"), PortRef::new("curve", "in"));
         g.connect(PortRef::new("curve", "out"), PortRef::new("fan", "duty"));
         g
@@ -240,8 +253,10 @@ mod tests {
         let mut backend = MockBackend::default();
         backend.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
 
-        let readings =
-            SensorReadings::from([(MockBackend::TEMP_SENSOR.to_owned(), Value::raw(Quantity::Temperature, 55.0))]);
+        let readings = SensorReadings::from([(
+            MockBackend::TEMP_SENSOR.to_owned(),
+            Value::raw(Quantity::Temperature, 55.0),
+        )]);
         let tick = compiled.tick(&readings, &mut EvalState::new());
         let applied = apply_tick(&tick, &policy(), &mut backend);
 
@@ -256,12 +271,18 @@ mod tests {
         backend.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
 
         // 25 °C is below the curve's first point, so the graph asks for 0 %.
-        let readings =
-            SensorReadings::from([(MockBackend::TEMP_SENSOR.to_owned(), Value::raw(Quantity::Temperature, 25.0))]);
+        let readings = SensorReadings::from([(
+            MockBackend::TEMP_SENSOR.to_owned(),
+            Value::raw(Quantity::Temperature, 25.0),
+        )]);
         let tick = compiled.tick(&readings, &mut EvalState::new());
         let applied = apply_tick(&tick, &policy(), &mut backend);
 
-        assert_eq!(applied.commanded[MockBackend::CHANNEL], 20.0, "floor must win over the graph");
+        assert_eq!(
+            applied.commanded[MockBackend::CHANNEL],
+            20.0,
+            "floor must win over the graph"
+        );
     }
 
     #[test]
@@ -272,16 +293,25 @@ mod tests {
         let policy = policy();
 
         // Healthy tick first, so there is a "last value" to wrongly hold.
-        let readings =
-            SensorReadings::from([(MockBackend::TEMP_SENSOR.to_owned(), Value::raw(Quantity::Temperature, 55.0))]);
-        apply_tick(&compiled.tick(&readings, &mut EvalState::new()), &policy, &mut backend);
+        let readings = SensorReadings::from([(
+            MockBackend::TEMP_SENSOR.to_owned(),
+            Value::raw(Quantity::Temperature, 55.0),
+        )]);
+        apply_tick(
+            &compiled.tick(&readings, &mut EvalState::new()),
+            &policy,
+            &mut backend,
+        );
 
         // Now the sensor disappears.
         let tick = compiled.tick(&SensorReadings::new(), &mut EvalState::new());
         let applied = apply_tick(&tick, &policy, &mut backend);
 
         assert!(applied.commanded.is_empty());
-        assert_eq!(applied.failsafed[MockBackend::CHANNEL], FailsafeAction::RestoreFirmware);
+        assert_eq!(
+            applied.failsafed[MockBackend::CHANNEL],
+            FailsafeAction::RestoreFirmware
+        );
         assert!(backend.released, "the header must actually be handed back");
     }
 
@@ -292,7 +322,11 @@ mod tests {
         let mut backend = MockBackend::default();
         backend.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
 
-        let applied = apply_tick(&empty.tick(&SensorReadings::new(), &mut EvalState::new()), &policy(), &mut backend);
+        let applied = apply_tick(
+            &empty.tick(&SensorReadings::new(), &mut EvalState::new()),
+            &policy(),
+            &mut backend,
+        );
         assert!(applied.failsafed.contains_key(MockBackend::CHANNEL));
     }
 
@@ -321,8 +355,14 @@ mod tests {
         backend.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
         let applied = dying_breath(&policy(), &mut backend);
 
-        assert_eq!(applied.failsafed[MockBackend::CHANNEL], FailsafeAction::FixedDuty(100.0));
-        assert!(!backend.0.released, "must not release a header it cannot hand back");
+        assert_eq!(
+            applied.failsafed[MockBackend::CHANNEL],
+            FailsafeAction::FixedDuty(100.0)
+        );
+        assert!(
+            !backend.0.released,
+            "must not release a header it cannot hand back"
+        );
     }
 
     #[test]
@@ -339,9 +379,27 @@ mod tests {
     #[test]
     fn mixing_in_a_dead_sensor_failsafes_rather_than_cooling_less() {
         let mut g = Graph::default();
-        g.insert("a", NodeKind::Sensor { sensor_id: "a".into(), quantity: Quantity::Temperature });
-        g.insert("b", NodeKind::Sensor { sensor_id: "b".into(), quantity: Quantity::Temperature });
-        g.insert("mix", NodeKind::Mix { quantity: Quantity::Temperature, mode: MixMode::Max });
+        g.insert(
+            "a",
+            NodeKind::Sensor {
+                sensor_id: "a".into(),
+                quantity: Quantity::Temperature,
+            },
+        );
+        g.insert(
+            "b",
+            NodeKind::Sensor {
+                sensor_id: "b".into(),
+                quantity: Quantity::Temperature,
+            },
+        );
+        g.insert(
+            "mix",
+            NodeKind::Mix {
+                quantity: Quantity::Temperature,
+                mode: MixMode::Max,
+            },
+        );
         g.insert(
             "curve",
             NodeKind::Curve {
@@ -352,7 +410,12 @@ mod tests {
                 ],
             },
         );
-        g.insert("fan", NodeKind::FanOutput { channel: MockBackend::CHANNEL.into() });
+        g.insert(
+            "fan",
+            NodeKind::FanOutput {
+                channel: MockBackend::CHANNEL.into(),
+            },
+        );
         g.connect(PortRef::new("a", "out"), PortRef::new("mix", "in"));
         g.connect(PortRef::new("b", "out"), PortRef::new("mix", "in"));
         g.connect(PortRef::new("mix", "out"), PortRef::new("curve", "in"));
@@ -362,9 +425,13 @@ mod tests {
         let mut backend = MockBackend::default();
         backend.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
 
-        let readings = SensorReadings::from([("a".to_owned(), Value::raw(Quantity::Temperature, 95.0))]);
-        let applied =
-            apply_tick(&compiled.tick(&readings, &mut EvalState::new()), &policy(), &mut backend);
+        let readings =
+            SensorReadings::from([("a".to_owned(), Value::raw(Quantity::Temperature, 95.0))]);
+        let applied = apply_tick(
+            &compiled.tick(&readings, &mut EvalState::new()),
+            &policy(),
+            &mut backend,
+        );
 
         assert!(applied.commanded.is_empty());
         assert!(applied.failsafed.contains_key(MockBackend::CHANNEL));

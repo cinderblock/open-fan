@@ -51,7 +51,10 @@ pub enum PawnIoError {
     MissingExport(&'static str),
 
     #[error("PawnIO call {call} failed (HRESULT 0x{hresult:08X})")]
-    Call { call: &'static str, hresult: Hresult },
+    Call {
+        call: &'static str,
+        hresult: Hresult,
+    },
 
     #[error(
         "PawnIO refused to load module {module}. The signed edition only loads modules \
@@ -67,7 +70,11 @@ pub enum PawnIoError {
 type Result<T> = std::result::Result<T, PawnIoError>;
 
 fn check(call: &'static str, hr: Hresult) -> Result<()> {
-    if hr >= 0 { Ok(()) } else { Err(PawnIoError::Call { call, hresult: hr }) }
+    if hr >= 0 {
+        Ok(())
+    } else {
+        Err(PawnIoError::Call { call, hresult: hr })
+    }
 }
 
 struct Lib {
@@ -92,9 +99,10 @@ impl Lib {
         unsafe {
             macro_rules! sym {
                 ($name:literal, $ty:ty) => {{
-                    let s: libloading::Symbol<$ty> = library
-                        .get(concat!($name, "\0").as_bytes())
-                        .map_err(|_| PawnIoError::MissingExport($name))?;
+                    let s: libloading::Symbol<$ty> =
+                        library
+                            .get(concat!($name, "\0").as_bytes())
+                            .map_err(|_| PawnIoError::MissingExport($name))?;
                     *s
                 }};
             }
@@ -105,7 +113,14 @@ impl Lib {
             let execute = sym!("pawnio_execute", FnExecute);
             let close = sym!("pawnio_close", FnClose);
 
-            Ok(Self { _library: library, version, open, load, execute, close })
+            Ok(Self {
+                _library: library,
+                version,
+                open,
+                load,
+                execute,
+                close,
+            })
         }
     }
 }
@@ -123,7 +138,11 @@ pub fn library_version() -> Result<(u16, u8, u8)> {
     let mut raw: u32 = 0;
     // SAFETY: `raw` is a valid, aligned, initialized u32 for the duration of the call.
     check("pawnio_version", unsafe { (lib.version)(&mut raw) })?;
-    Ok((((raw >> 16) & 0xFFFF) as u16, ((raw >> 8) & 0xFF) as u8, (raw & 0xFF) as u8))
+    Ok((
+        ((raw >> 16) & 0xFFFF) as u16,
+        ((raw >> 8) & 0xFF) as u8,
+        (raw & 0xFF) as u8,
+    ))
 }
 
 /// An open PawnIO executor with one module loaded.
@@ -150,7 +169,11 @@ impl PawnIo {
         // it null and returns a failing HRESULT.
         check("pawnio_open", unsafe { (lib.open)(&mut handle) })?;
 
-        let mut this = Self { lib, handle, module };
+        let mut this = Self {
+            lib,
+            handle,
+            module,
+        };
 
         // SAFETY: `blob` is a valid readable slice for `blob.len()` bytes, and `handle`
         // came from a successful `pawnio_open`.
@@ -158,7 +181,9 @@ impl PawnIo {
         if hr < 0 {
             // Give the signature case its own message: it is the failure users hit, and
             // "HRESULT 0x80070005" tells them nothing about what to do next.
-            return Err(PawnIoError::ModuleRejected { module: std::mem::take(&mut this.module) });
+            return Err(PawnIoError::ModuleRejected {
+                module: std::mem::take(&mut this.module),
+            });
         }
 
         Ok(this)
@@ -168,8 +193,7 @@ impl PawnIo {
     ///
     /// Returns the number of `u64` entries written into `out`.
     pub fn execute(&self, name: &str, input: &[u64], out: &mut [u64]) -> Result<usize> {
-        let cname =
-            CString::new(name).map_err(|_| PawnIoError::InvalidName(name.to_owned()))?;
+        let cname = CString::new(name).map_err(|_| PawnIoError::InvalidName(name.to_owned()))?;
         let mut written: usize = 0;
 
         // SAFETY: `cname` is NUL-terminated and outlives the call; `input` and `out` are
@@ -198,7 +222,10 @@ impl PawnIo {
     pub fn load_module_from_path(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let blob = std::fs::read(path).map_err(|_| PawnIoError::NotInstalled)?;
-        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
         Self::load_module(name, &blob)
     }
 }

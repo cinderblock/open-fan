@@ -9,7 +9,7 @@ members = [
     "crates/of-engine",
     "crates/of-config",
     "crates/of-ipc",
-    # "src-tauri", # added below once the shell exists
+    "src-tauri",
 ]
 
 [workspace.package]

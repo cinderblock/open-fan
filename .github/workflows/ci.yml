@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail the build on warnings in CI while keeping local builds quiet.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The control logic is platform-independent by design, so it is tested on Linux
+        # too: a crate that quietly grows a Windows-only assumption should fail here
+        # rather than at the start of the Linux port.
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        # of-hal-pawnio is Windows-only; on Linux the rest of the workspace must still
+        # lint cleanly without it.
+        run: cargo clippy --workspace --all-targets --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio' || '' }}
+
+      - name: Test
+        run: cargo test --workspace --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio' || '' }}
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Generate TypeScript bindings
+        # The Quantity union the editor uses is generated from the Rust definition. This
+        # step is what makes a backend type change that the frontend has not caught up
+        # with a build failure instead of a runtime surprise.
+        run: bun run bindings
+
+      - name: Fail if bindings are stale
+        run: git diff --exit-code --stat -- ui/src/bindings || (echo "::error::Generated bindings differ from committed sources; run 'bun run bindings'." && exit 1)
+
+      - name: Typecheck and build
+        run: bun run build
+
+  app:
+    name: App build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - run: bun install --frozen-lockfile
+      - run: bun run bindings
+
+      - name: Build the desktop app
+        # Bundling is exercised on every push so a packaging break is caught here rather
+        # than on release day.
+        run: bun run tauri build --no-bundle
+
+  # Every dependency is checked for a license compatible with shipping an MIT binary.
+  # This matters more than usual here: the kernel-driver ecosystem this project builds on
+  # is GPL/LGPL, and the distinction between linking and vendoring is what keeps OpenFan
+  # distributable. See plans/open-fan.md.
+  licenses:
+    name: Licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources

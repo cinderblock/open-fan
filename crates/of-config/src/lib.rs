@@ -33,7 +33,11 @@ pub struct Profile {
 
 impl Profile {
     pub fn new(name: impl Into<String>, graph: Graph) -> Self {
-        Self { schema: CURRENT_SCHEMA, name: name.into(), graph }
+        Self {
+            schema: CURRENT_SCHEMA,
+            name: name.into(),
+            graph,
+        }
     }
 }
 
@@ -62,7 +66,9 @@ pub fn load(json: &str) -> Result<Profile, ConfigError> {
 /// this application, a discarded field could be a temperature limit.
 pub fn migrate(profile: Profile) -> Result<Profile, ConfigError> {
     if profile.schema > CURRENT_SCHEMA {
-        return Err(ConfigError::FromTheFuture { found: profile.schema });
+        return Err(ConfigError::FromTheFuture {
+            found: profile.schema,
+        });
     }
     // No historical versions to migrate from yet. Each future bump adds a step here.
     Ok(profile)
@@ -93,6 +99,9 @@ mod tests {
         let mut profile = Profile::new("Quiet", Graph::default());
         profile.schema = CURRENT_SCHEMA + 1;
         let json = serde_json::to_string(&profile).unwrap();
-        assert!(matches!(load(&json), Err(ConfigError::FromTheFuture { .. })));
+        assert!(matches!(
+            load(&json),
+            Err(ConfigError::FromTheFuture { .. })
+        ));
     }
 }

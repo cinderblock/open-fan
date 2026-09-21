@@ -30,11 +30,23 @@ pub struct PortSpec {
 
 impl PortSpec {
     pub const fn input(key: &'static str, label: &'static str, quantity: Quantity) -> Self {
-        Self { key, label, quantity, required: true, variadic: false }
+        Self {
+            key,
+            label,
+            quantity,
+            required: true,
+            variadic: false,
+        }
     }
 
     pub const fn output(key: &'static str, label: &'static str, quantity: Quantity) -> Self {
-        Self { key, label, quantity, required: false, variadic: false }
+        Self {
+            key,
+            label,
+            quantity,
+            required: false,
+            variadic: false,
+        }
     }
 
     pub const fn optional(mut self) -> Self {
@@ -96,7 +108,10 @@ pub struct NodeState {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum NodeKind {
     /// Reads a hardware sensor by id.
-    Sensor { sensor_id: String, quantity: Quantity },
+    Sensor {
+        sensor_id: String,
+        quantity: Quantity,
+    },
 
     /// Emits a fixed value. Also the backing node for a manual slider.
     Constant { quantity: Quantity, value: f64 },
@@ -105,17 +120,27 @@ pub enum NodeKind {
     ///
     /// This is the node that makes `Temperature → Duty` legal, and the reason that
     /// conversion cannot happen by accident anywhere else.
-    Curve { input: Quantity, points: Vec<CurvePoint> },
+    Curve {
+        input: Quantity,
+        points: Vec<CurvePoint>,
+    },
 
     /// Combines any number of same-quantity inputs into one.
     Mix { quantity: Quantity, mode: MixMode },
 
     /// Constrains a value to a range.
-    Clamp { quantity: Quantity, min: f64, max: f64 },
+    Clamp {
+        quantity: Quantity,
+        min: f64,
+        max: f64,
+    },
 
     /// Limits how fast a value may change per tick. The primary tool against the
     /// audible hunting that an aggressive curve produces on a slow thermal mass.
-    RateLimit { quantity: Quantity, max_delta_per_tick: f64 },
+    RateLimit {
+        quantity: Quantity,
+        max_delta_per_tick: f64,
+    },
 
     /// Drives a hardware output channel.
     FanOutput { channel: String },
@@ -172,12 +197,14 @@ impl NodeKind {
         state: &mut NodeState,
     ) -> Produced {
         // Convenience: the single value on a non-variadic input, if present.
-        let single = |key: &str| -> Option<Value> {
-            inputs.get(key).and_then(|v| v.first()).copied()
-        };
+        let single =
+            |key: &str| -> Option<Value> { inputs.get(key).and_then(|v| v.first()).copied() };
 
         match self {
-            NodeKind::Sensor { sensor_id, quantity } => {
+            NodeKind::Sensor {
+                sensor_id,
+                quantity,
+            } => {
                 // A sensor that is not reporting yields NaN rather than a plausible
                 // number. Downstream sinks see an untrustworthy value and fail safe,
                 // which is the whole reason we do not substitute a default here.
@@ -185,7 +212,10 @@ impl NodeKind {
                     .get(sensor_id)
                     .copied()
                     .unwrap_or(Value::raw(*quantity, f64::NAN));
-                Produced { outputs: vec![("out", value)], ..Default::default() }
+                Produced {
+                    outputs: vec![("out", value)],
+                    ..Default::default()
+                }
             }
 
             NodeKind::Constant { quantity, value } => Produced {
@@ -203,8 +233,10 @@ impl NodeKind {
             }
 
             NodeKind::Mix { quantity, mode } => {
-                let values: Vec<f64> =
-                    inputs.get("in").map(|v| v.iter().map(|x| x.scalar).collect()).unwrap_or_default();
+                let values: Vec<f64> = inputs
+                    .get("in")
+                    .map(|v| v.iter().map(|x| x.scalar).collect())
+                    .unwrap_or_default();
                 let mixed = mix(*mode, &values);
                 Produced {
                     outputs: vec![("out", Value::raw(*quantity, mixed))],
@@ -223,14 +255,18 @@ impl NodeKind {
                 }
             }
 
-            NodeKind::RateLimit { quantity, max_delta_per_tick } => {
+            NodeKind::RateLimit {
+                quantity,
+                max_delta_per_tick,
+            } => {
                 let x = single("in").map(|v| v.scalar).unwrap_or(f64::NAN);
                 let y = match (state.last, x.is_finite()) {
                     // No history yet: adopt the input immediately rather than ramping
                     // up from zero, which would start every boot with the fans off.
                     (_, true) if state.last.is_none() => x,
                     (Some(prev), true) => {
-                        let delta = (x - prev).clamp(-max_delta_per_tick.abs(), max_delta_per_tick.abs());
+                        let delta =
+                            (x - prev).clamp(-max_delta_per_tick.abs(), max_delta_per_tick.abs());
                         prev + delta
                     }
                     // A bad input must not be smoothed into the output; pass the fault on.
@@ -253,7 +289,10 @@ impl NodeKind {
                     },
                     // Unconnected or untrustworthy: report a fault so the engine applies
                     // this channel's failsafe. Never silently hold the last value.
-                    _ => Produced { faults: vec![channel.clone()], ..Default::default() },
+                    _ => Produced {
+                        faults: vec![channel.clone()],
+                        ..Default::default()
+                    },
                 }
             }
         }

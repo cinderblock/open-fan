@@ -1,0 +1,209 @@
+:root {
+  --bg: #14171c;
+  --panel: #1c2027;
+  --panel-border: #2b313a;
+  --text: #e6e9ee;
+  --text-dim: #99a2ad;
+  --accent: #3d9ae8;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font:
+    13px/1.45 'Segoe UI Variable Text',
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+}
+
+/* --- Nodes ------------------------------------------------------------------ */
+
+.typed-node {
+  min-width: 190px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  overflow: hidden;
+}
+
+.typed-node--selected {
+  border-color: var(--accent);
+}
+
+.typed-node__header {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 11px;
+  background: #222831;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.typed-node__title {
+  font-weight: 600;
+}
+
+.typed-node__subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.typed-node__ports {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 0;
+}
+
+.port-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 11px;
+}
+
+.port-row--output {
+  flex-direction: row-reverse;
+}
+
+.port-label {
+  flex: 1;
+}
+
+.port-row--output .port-label {
+  text-align: right;
+}
+
+.port-type {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+.port-readout {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* Handles are given a distinct outline as well as a colour, so the port type is not
+   conveyed by hue alone. Variadic inputs are square to mark that they take many. */
+.port-handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid;
+  border-radius: 50%;
+}
+
+.port-handle--variadic {
+  border-radius: 2px;
+}
+
+/* --- Legend ----------------------------------------------------------------- */
+
+.legend {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 210px;
+  padding: 11px 13px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  z-index: 5;
+}
+
+.legend__title {
+  margin: 0 0 5px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.legend__hint {
+  margin: 0 0 9px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.legend__list {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.legend__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.legend__label {
+  flex: 1;
+}
+
+.legend__symbol {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* --- Rejection notice -------------------------------------------------------- */
+
+.rejection {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 13px;
+  background: #3a2326;
+  border: 1px solid #6b3a3f;
+  border-radius: 8px;
+  z-index: 10;
+}
+
+.rejection button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rejection button:hover {
+  color: var(--text);
+}

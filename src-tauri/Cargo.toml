@@ -1,0 +1,37 @@
+[package]
+name = "open-fan"
+description = "OpenFan desktop shell: tray, window lifecycle and the bridge to the control engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+# Named distinctly from the binary so the desktop shell can be exercised from tests and,
+# later, hosted by a Windows service without duplicating the setup code.
+name = "open_fan_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+of-core = { workspace = true }
+of-engine = { workspace = true }
+of-hal = { workspace = true }
+of-hal-mock = { workspace = true }
+of-units = { workspace = true }
+
+tauri = { version = "2.11.6", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2.4.5"
+tauri-plugin-autostart = "2.5.1"
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+of-hal-pawnio = { workspace = true }

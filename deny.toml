@@ -1,0 +1,44 @@
+# cargo-deny configuration.
+#
+# OpenFan ships as an MIT-licensed binary that sits on top of a kernel-driver ecosystem
+# which is largely GPL/LGPL. That combination is fine — we link dynamically to PawnIOLib
+# (LGPL-2.1) and vendor none of it — but it is fine only as long as nobody accidentally
+# pulls a copyleft crate into the binary. This check is what makes that accident loud.
+
+[graph]
+all-features = true
+
+[licenses]
+# Permissive licenses only, for crates compiled into the binary.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MPL-2.0",         # file-level copyleft; safe to link, must stay unmodified
+    "BSL-1.0",
+    "OpenSSL",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+# WinRing0 is the abandoned ring-0 shim that Defender flags under CVE-2020-14979. No
+# crate wrapping it may ever enter this dependency graph — see plans/open-fan.md.
+deny = [
+    { name = "winring0" },
+    { name = "winring0-sys" },
+    { name = "ols-sys" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

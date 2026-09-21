@@ -48,7 +48,10 @@ pub struct PortRef {
 
 impl PortRef {
     pub fn new(node: impl Into<NodeId>, port: impl Into<String>) -> Self {
-        Self { node: node.into(), port: port.into() }
+        Self {
+            node: node.into(),
+            port: port.into(),
+        }
     }
 }
 
@@ -80,11 +83,19 @@ pub struct NodeInstance {
 
 impl NodeInstance {
     pub fn new(kind: NodeKind) -> Self {
-        Self { kind, label: String::new(), position: (0.0, 0.0) }
+        Self {
+            kind,
+            label: String::new(),
+            position: (0.0, 0.0),
+        }
     }
 
     pub fn display_name(&self) -> &str {
-        if self.label.is_empty() { self.kind.default_label() } else { &self.label }
+        if self.label.is_empty() {
+            self.kind.default_label()
+        } else {
+            &self.label
+        }
     }
 }
 
@@ -114,7 +125,12 @@ pub enum GraphError {
     NotAnInput { edge_to: PortRef },
 
     #[error("{from} ({source_ty}) cannot drive {to} ({sink_ty}): insert a conversion node")]
-    TypeMismatch { from: PortRef, to: PortRef, source_ty: Quantity, sink_ty: Quantity },
+    TypeMismatch {
+        from: PortRef,
+        to: PortRef,
+        source_ty: Quantity,
+        sink_ty: Quantity,
+    },
 
     #[error("input {0} has more than one incoming connection")]
     InputOverSubscribed(PortRef),
@@ -182,17 +198,23 @@ impl Graph {
                 continue;
             };
             let Some((to_spec, to_dir)) = self.port_spec(&edge.to) else {
-                errors
-                    .push(GraphError::UnknownPort(edge.to.node.clone(), edge.to.port.clone()));
+                errors.push(GraphError::UnknownPort(
+                    edge.to.node.clone(),
+                    edge.to.port.clone(),
+                ));
                 continue;
             };
 
             if from_dir != Direction::Out {
-                errors.push(GraphError::NotAnOutput { edge_from: edge.from.clone() });
+                errors.push(GraphError::NotAnOutput {
+                    edge_from: edge.from.clone(),
+                });
                 continue;
             }
             if to_dir != Direction::In {
-                errors.push(GraphError::NotAnInput { edge_to: edge.to.clone() });
+                errors.push(GraphError::NotAnInput {
+                    edge_to: edge.to.clone(),
+                });
                 continue;
             }
 
@@ -219,8 +241,7 @@ impl Graph {
                     continue;
                 }
                 let r = PortRef::new(id.clone(), port.key);
-                let connected = driven.contains_key(&r)
-                    || self.edges.iter().any(|e| e.to == r);
+                let connected = driven.contains_key(&r) || self.edges.iter().any(|e| e.to == r);
                 if !connected {
                     errors.push(GraphError::MissingInput(r));
                 }
@@ -230,7 +251,10 @@ impl Graph {
         match self.topological_order() {
             Ok(order) => {
                 if errors.is_empty() {
-                    Ok(CompiledGraph { graph: self.clone(), order })
+                    Ok(CompiledGraph {
+                        graph: self.clone(),
+                        order,
+                    })
                 } else {
                     Err(errors)
                 }
@@ -316,7 +340,9 @@ impl CompiledGraph {
         let mut outputs: BTreeMap<PortRef, Value> = BTreeMap::new();
 
         for id in &self.order {
-            let Some(instance) = self.graph.nodes.get(id) else { continue };
+            let Some(instance) = self.graph.nodes.get(id) else {
+                continue;
+            };
 
             // Gather inputs by following edges backwards. Variadic ports collect many.
             let mut inputs: BTreeMap<&str, Vec<Value>> = BTreeMap::new();

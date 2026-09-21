@@ -11,8 +11,10 @@ ui/dist/
 src-tauri/target/
 src-tauri/gen/
 
-# Generated TypeScript bindings (emitted by ts-rs from of-ipc)
-ui/src/bindings/
+# ts-rs scratch output. The bindings the UI imports live in ui/src/bindings/ and ARE
+# committed, so the frontend builds without a Rust toolchain and type drift shows up
+# in review as a diff.
+crates/*/bindings/
 
 # Editors / OS
 .vscode/

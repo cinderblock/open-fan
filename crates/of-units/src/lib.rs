@@ -18,7 +18,11 @@ use serde::{Deserialize, Serialize};
 
 /// The physical quantity carried by a port, and therefore by a connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum Quantity {
@@ -152,7 +156,11 @@ impl Quantity {
 
 /// A quantity-tagged scalar: one value travelling along one connection.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 pub struct Value {
     pub quantity: Quantity,
     /// The magnitude, in the quantity's canonical unit.
@@ -162,7 +170,10 @@ pub struct Value {
 impl Value {
     /// Construct a value, clamping into the quantity's physical limits.
     pub fn new(quantity: Quantity, scalar: f64) -> Self {
-        Self { quantity, scalar: quantity.clamp(scalar) }
+        Self {
+            quantity,
+            scalar: quantity.clamp(scalar),
+        }
     }
 
     /// Construct without clamping. For tests and for deserializing already-valid data.
@@ -197,7 +208,10 @@ impl Value {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TypeError {
     #[error("cannot connect {source_ty} output to {sink_ty} input: insert a conversion node")]
-    Mismatch { source_ty: Quantity, sink_ty: Quantity },
+    Mismatch {
+        source_ty: Quantity,
+        sink_ty: Quantity,
+    },
 }
 
 impl std::fmt::Display for Quantity {

@@ -127,8 +127,11 @@ impl MockBackend {
 
         // A stalled fan provides no forced convection regardless of commanded duty —
         // the case that makes "quiet" and "not cooling" look identical from the outside.
-        let airflow =
-            if self.effective_duty < self.config.stall_duty { 0.0 } else { self.effective_duty / 100.0 };
+        let airflow = if self.effective_duty < self.config.stall_duty {
+            0.0
+        } else {
+            self.effective_duty / 100.0
+        };
 
         let heating = self.config.heat_rate_c_per_s * self.load;
         let cooling =
@@ -229,7 +232,9 @@ mod tests {
 
     fn settle(plant: &mut MockBackend, duty: f64, ticks: usize) {
         plant.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
-        plant.set_duty(&MockBackend::CHANNEL.to_owned(), duty).unwrap();
+        plant
+            .set_duty(&MockBackend::CHANNEL.to_owned(), duty)
+            .unwrap();
         for _ in 0..ticks {
             plant.step();
         }
@@ -245,8 +250,12 @@ mod tests {
         cooled.set_load(1.0);
         settle(&mut cooled, 100.0, 600);
 
-        assert!(hot.temperature() > cooled.temperature() + 20.0,
-            "full duty must be clearly cooler: {} vs {}", hot.temperature(), cooled.temperature());
+        assert!(
+            hot.temperature() > cooled.temperature() + 20.0,
+            "full duty must be clearly cooler: {} vs {}",
+            hot.temperature(),
+            cooled.temperature()
+        );
     }
 
     #[test]
@@ -276,16 +285,23 @@ mod tests {
         let mut off = MockBackend::new(cfg);
         off.set_load(1.0);
         settle(&mut off, 0.0, 400);
-        assert!((plant.temperature() - off.temperature()).abs() < 0.5,
-            "a stalled fan must cool no better than a stopped one");
+        assert!(
+            (plant.temperature() - off.temperature()).abs() < 0.5,
+            "a stalled fan must cool no better than a stopped one"
+        );
     }
 
     #[test]
     fn commanded_duty_takes_the_transport_delay_to_reach_the_plant() {
-        let cfg = PlantConfig { transport_delay_ticks: 5, ..Default::default() };
+        let cfg = PlantConfig {
+            transport_delay_ticks: 5,
+            ..Default::default()
+        };
         let mut plant = MockBackend::new(cfg);
         plant.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
-        plant.set_duty(&MockBackend::CHANNEL.to_owned(), 100.0).unwrap();
+        plant
+            .set_duty(&MockBackend::CHANNEL.to_owned(), 100.0)
+            .unwrap();
 
         for _ in 0..5 {
             plant.step();
@@ -298,7 +314,9 @@ mod tests {
     #[test]
     fn driving_an_unacquired_channel_is_refused() {
         let mut plant = MockBackend::default();
-        let err = plant.set_duty(&MockBackend::CHANNEL.to_owned(), 50.0).unwrap_err();
+        let err = plant
+            .set_duty(&MockBackend::CHANNEL.to_owned(), 50.0)
+            .unwrap_err();
         assert!(matches!(err, HalError::NotAcquired(_)));
     }
 
@@ -308,6 +326,9 @@ mod tests {
         plant.acquire(&MockBackend::CHANNEL.to_owned()).unwrap();
         assert!(!plant.released);
         plant.release(&MockBackend::CHANNEL.to_owned()).unwrap();
-        assert!(plant.released, "tests need to see that the dying breath ran");
+        assert!(
+            plant.released,
+            "tests need to see that the dying breath ran"
+        );
     }
 }

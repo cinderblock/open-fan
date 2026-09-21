@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the OpenFan editor window. Deliberately minimal: the window is an editor, and every privileged operation happens in the backend behind an explicit command.",
+  "windows": ["main"],
+  "permissions": ["core:default", "autostart:allow-is-enabled", "autostart:allow-enable", "autostart:allow-disable"]
+}
