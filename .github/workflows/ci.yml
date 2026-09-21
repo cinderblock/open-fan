@@ -70,6 +70,11 @@ jobs:
       - name: Fail if bindings are stale
         run: git diff --exit-code --stat -- ui/src/bindings || (echo "::error::Generated bindings differ from committed sources; run 'bun run bindings'." && exit 1)
 
+      - name: Test
+        # Pure editor logic — placement, document translation — is tested here rather
+        # than left to be caught by eye in the running app.
+        run: bun test
+
       - name: Typecheck and build
         run: bun run build
 

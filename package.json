@@ -12,7 +12,8 @@
     "bindings": "cargo test -p of-units --features ts && cargo test -p of-core --features ts && cargo test -p of-ipc",
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/make-icon.mjs && tauri icon assets/icon-source.png",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "bun test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/bun": "^1.4.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5",

@@ -46,6 +46,7 @@ import {
   toFlowEdges,
   toFlowNodes,
 } from './graph';
+import { placeNode } from './layout';
 import TypedNode, { type TypedNodeType } from './nodes/TypedNode';
 import { connects, rejectionReason, styleOf } from './quantities';
 import Sidebar from './Sidebar';
@@ -226,11 +227,9 @@ export default function App() {
       const current = applyToGraph(graph, nodes, edges);
       const id = freshId(current, descriptor.kind);
 
-      // Place the new node clear of the existing ones rather than on top of them.
-      const right = nodes.reduce((max, n) => Math.max(max, n.position.x), -Infinity);
-      const position: [number, number] = Number.isFinite(right)
-        ? [right + 240, 80 + (Object.keys(current.nodes).length % 4) * 130]
-        : [80, 80];
+      // Sources left, sinks right, transforms between, each column aligned. See layout.ts.
+      const placed = placeNode(nodes, descriptor);
+      const position: [number, number] = [placed.x, placed.y];
 
       setLocalGraph({
         ...current,
