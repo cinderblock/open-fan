@@ -217,6 +217,96 @@ and not an acceptable security posture. WinRing0 is permanently off the table.**
   releases; budget for a code-signing certificate or accept SmartScreen friction and say
   so plainly in the README.
 
+### Hardware facts about the reference machine (`Quasar`) — Phase 3
+
+Surveyed 2026-09-21. This is the target machine the whole of Phase 3 was blocked on, and
+it answers Open Question 1.
+
+| | |
+| --- | --- |
+| Board | ASUS **ROG STRIX X570-I GAMING** (Mini-ITX), BIOS **4403** (2022-04-26) |
+| CPU | AMD Ryzen 9 5950X (16C/32T) |
+| RAM / OS | 64 GB, Windows 11 Pro 26200 |
+| Super I/O | **Nuvoton NCT6798D** |
+| GPU | NVIDIA RTX 3090 (GA102-A), 2 fan controls via NVAPI |
+
+**Provisional header map** — *derived, NOT yet confirmed by Cameron.* Taken from the
+existing fan tool's `userConfig.json`, which is the one competitor artefact the clean-room
+rules allow us to read (a documented-by-observation config file, parsed for interop).
+Confirm every row before writing anything:
+
+| PWM channel | Tachometer | Label | Notes |
+| --- | --- | --- | --- |
+| `nct6798d/control/0` | `fan/0` | Chassis Fan | |
+| `nct6798d/control/1` | `fan/1` | CPU Fan | |
+| `nct6798d/control/4` | `fan/4` | **AIO Pump** | **Never stall-test. Never reduce casually.** A stopped pump on a 5950X is thermal runaway in seconds, and unlike a fan it has no airflow margin at all. |
+
+Two further tachometers are exposed by the board's EC, not the NCT6798D, and appear to be
+**read-only** (no matching control): `ec/fan/0` "VRM Heat Sink Fan" and `ec/fan/1`
+"Chipset Fan". Being unable to control these is the correct and desirable outcome — they
+are firmware-managed and should stay that way.
+
+Only 3 of the NCT6798D's PWM channels are wired on this Mini-ITX board; indices 2, 3, 5, 6
+exist in the chip but are not brought out to headers. Enumerating a channel the board does
+not wire is a way to "successfully" control nothing, so channel enumeration must not simply
+assume all 7.
+
+### PawnIO on `Quasar`: installed, and the crate could not see it
+
+PawnIO **2.0.1.0** is installed at `C:\Program Files\PawnIO`, service `PawnIO` running,
+`Automatic` start. `pawnio_version` answers **2.0.0**. *The FFI written in Phase 1 works
+against a real driver* — first confirmation, previously untested.
+
+Two negative results worth keeping:
+
+1. **`PawnIOLib.dll` is not on any search path.** It ships only in
+   `C:\Program Files\PawnIO\`, which the installer does not add to `PATH`, and it is not in
+   `System32`. So `libloading::Library::new("PawnIOLib.dll")` fails, and the crate reported
+   the flatly false *"PawnIO is not installed. ... install it from https://pawnio.eu and
+   restart."* on a machine where it was installed and running. Any backend trusting
+   `is_available()` would have silently fallen back to the mock. Fixed by resolving the
+   install directory explicitly. The locations we try, in order:
+   - `PawnIOLib.dll` bare, so a copy beside our exe or on `PATH` still wins;
+   - `HKLM\SYSTEM\CurrentControlSet\Services\PawnIO\ImagePath`, which here reads
+     `\??\C:\Program Files\PawnIO\PawnIO.sys`; the DLL sits beside the `.sys`. Best source,
+     because it points at the driver *actually loaded* rather than one merely installed;
+   - the uninstall key's `InstallLocation`, under
+     `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*` where `DisplayName` is
+     `PawnIO`;
+   - `%ProgramFiles%\PawnIO`.
+2. **No hardware modules are installed.** The PawnIO installer ships the driver, the
+   library, `PawnIOUtil.exe` and an uninstaller — and *no* `.bin` module blobs. `LpcIO`,
+   which is what we need for the NCT6798D, comes separately from the
+   `namazso/PawnIO.Modules` releases. So "load the module from the PawnIO installation
+   directory" does not work out of the box, and first-run must treat a **missing module**
+   as a distinct, separately-explained condition from a **missing driver**.
+   `PawnIOUtil.exe` only signs/tests/runs `.amx` files; it is not a module installer.
+
+### The Super I/O bus on `Quasar` is contended — four ring-0 drivers, two active writers
+
+Found running concurrently at survey time:
+
+| Driver | Owner |
+| --- | --- |
+| `PawnIO.sys` | ours |
+| `AsIO2.sys` / `AsIO3.sys` (`Asusgio2`/`Asusgio3`) | ASUS Armoury Crate (`ArmourySocketServer`, running) |
+| `inpoutx64.sys` | direct port I/O shim used by the existing monitoring/fan stack |
+
+and, critically, **the existing fan control application is running and actively owns
+`control/0`, `control/1` and `control/4`** — the exact three headers we want.
+
+This has a consequence that is easy to miss and would quietly break the central safety
+invariant: **while another controller holds the headers, the "existing configuration" that
+`acquire()` is supposed to capture is not the firmware's.** It is the other tool's manual
+mode and its current duty. Recording that and calling it "restore firmware control" would
+be a lie — `release()` would hand back manual mode with nobody driving it, which is exactly
+the state the failsafe design exists to prevent.
+
+Therefore: **the other controller must be stopped, and the machine rebooted so the BIOS
+curve is what is actually loaded in the chip, before the first `acquire()` is trusted to
+capture restorable firmware state.** Two writers on the same PWM registers is also simply
+unsafe regardless of what we record.
+
 ### Hardware facts about the dev box (`Noook`)
 
 Recorded so a future session does not re-derive them: `Win32_Fan` returns three useless

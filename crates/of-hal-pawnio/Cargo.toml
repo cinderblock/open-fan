@@ -14,3 +14,6 @@ thiserror = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 libloading = "0.9.0"
+# Used only to find where PawnIO was installed: the installer puts PawnIOLib.dll in a
+# directory that is on no search path, so a bare LoadLibrary cannot find it.
+windows-registry = "0.100.0"

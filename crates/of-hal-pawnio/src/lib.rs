@@ -26,7 +26,7 @@
 mod ffi;
 
 #[cfg(windows)]
-pub use ffi::{PawnIo, PawnIoError, is_available, library_version};
+pub use ffi::{PawnIo, PawnIoError, is_available, library_version, module_search_dirs};
 
 #[cfg(not(windows))]
 compile_error!(

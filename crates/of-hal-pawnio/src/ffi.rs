@@ -47,6 +47,13 @@ pub enum PawnIoError {
     )]
     NotInstalled,
 
+    #[error(
+        "PawnIO is installed at {path}, but the PawnIOLib.dll there could not be loaded \
+         ({detail}). The installation may be damaged; reinstalling from \
+         https://pawnio.eu should fix it."
+    )]
+    LibraryUnusable { path: String, detail: String },
+
     #[error("PawnIOLib is missing the {0} export; the installed version may be too old")]
     MissingExport(&'static str),
 
@@ -63,6 +70,13 @@ pub enum PawnIoError {
     )]
     ModuleRejected { module: String },
 
+    #[error(
+        "PawnIO hardware module {module:?} was not found. PawnIO installs the driver only; \
+         the hardware modules are a separate download from \
+         https://github.com/namazso/PawnIO.Modules/releases. Searched: {searched}"
+    )]
+    ModuleNotFound { module: String, searched: String },
+
     #[error("function name {0:?} is not valid for FFI")]
     InvalidName(String),
 }
@@ -77,6 +91,113 @@ fn check(call: &'static str, hr: Hresult) -> Result<()> {
     }
 }
 
+/// Locating `PawnIOLib.dll`.
+///
+/// The installer puts the library in `C:\Program Files\PawnIO\` and adds that directory to
+/// neither `PATH` nor `System32`, so a bare `LoadLibrary("PawnIOLib.dll")` fails on a
+/// machine where PawnIO is installed, running and working. Reporting that as "not
+/// installed" is worse than unhelpful: a backend trusting [`is_available`] would silently
+/// fall back to the mock on a machine with real fans. So we look the directory up.
+mod resolve {
+    use std::path::{Path, PathBuf};
+
+    pub const LIB_NAME: &str = "PawnIOLib.dll";
+
+    /// Turn a service `ImagePath` into the directory holding the driver.
+    ///
+    /// Values look like `\??\C:\Program Files\PawnIO\PawnIO.sys`, but the NT prefix is
+    /// optional, `\SystemRoot\` is also used, and a path may be relative to the Windows
+    /// directory. Pure, so it is tested without touching a registry.
+    pub fn image_path_to_dir(image_path: &str, system_root: &str) -> Option<PathBuf> {
+        let trimmed = image_path.trim();
+
+        let rebased = if let Some(rest) = trimmed.strip_prefix(r"\??\") {
+            rest.to_owned()
+        } else if let Some(rest) = trimmed.strip_prefix(r"\SystemRoot\") {
+            format!(r"{system_root}\{rest}")
+        } else {
+            trimmed.to_owned()
+        };
+
+        if rebased.is_empty() {
+            return None;
+        }
+
+        let path = PathBuf::from(&rebased);
+        let absolute = if path.is_absolute() {
+            path
+        } else {
+            Path::new(system_root).join(path)
+        };
+
+        absolute
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+    }
+
+    /// Where the *currently loaded* driver lives — the best source available, because it
+    /// describes the driver Windows actually has rather than one that merely left
+    /// registry keys behind.
+    fn dir_from_service() -> Option<PathBuf> {
+        let key = windows_registry::LOCAL_MACHINE
+            .open(r"SYSTEM\CurrentControlSet\Services\PawnIO")
+            .ok()?;
+        let image_path = key.get_string("ImagePath").ok()?;
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+        image_path_to_dir(&image_path, &system_root)
+    }
+
+    /// `InstallLocation` from the uninstall entry, which covers a PawnIO that is installed
+    /// but whose service is not currently registered.
+    fn dir_from_uninstall_key() -> Option<PathBuf> {
+        let uninstall = windows_registry::LOCAL_MACHINE
+            .open(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+            .ok()?;
+
+        uninstall.keys().ok()?.find_map(|name| {
+            let entry = uninstall.open(&name).ok()?;
+            if entry.get_string("DisplayName").ok()? != "PawnIO" {
+                return None;
+            }
+            let location = entry.get_string("InstallLocation").ok()?;
+            let location = location.trim();
+            (!location.is_empty()).then(|| PathBuf::from(location))
+        })
+    }
+
+    /// Directories PawnIO may be installed in, best first, deduplicated.
+    pub fn install_dirs() -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+
+        for dir in [
+            dir_from_service(),
+            dir_from_uninstall_key(),
+            std::env::var_os("ProgramFiles").map(|pf| PathBuf::from(pf).join("PawnIO")),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+
+        dirs
+    }
+
+    /// Full paths to try for the library, best first.
+    ///
+    /// The bare file name comes first so a copy placed beside our executable, or a
+    /// directory the user has put on `PATH`, still wins — that is the escape hatch for a
+    /// non-standard install.
+    pub fn library_candidates() -> Vec<PathBuf> {
+        let mut candidates = vec![PathBuf::from(LIB_NAME)];
+        candidates.extend(install_dirs().into_iter().map(|dir| dir.join(LIB_NAME)));
+        candidates
+    }
+}
+
 struct Lib {
     _library: libloading::Library,
     version: FnVersion,
@@ -88,10 +209,39 @@ struct Lib {
 
 impl Lib {
     fn load() -> Result<Self> {
+        let mut last_located_failure: Option<(std::path::PathBuf, String)> = None;
+
         // SAFETY: loading a library runs its initializers. PawnIOLib is a well-behaved
         // installed component; there is no safer alternative to LoadLibrary here.
-        let library = unsafe { libloading::Library::new("PawnIOLib.dll") }
-            .map_err(|_| PawnIoError::NotInstalled)?;
+        let library = resolve::library_candidates()
+            .into_iter()
+            .find_map(
+                |candidate| match unsafe { libloading::Library::new(&candidate) } {
+                    Ok(library) => Some(library),
+                    Err(e) => {
+                        // Only remember a failure at a path we had positive reason to believe
+                        // in. The bare-name probe failing is the ordinary case on a correctly
+                        // installed machine, and says nothing.
+                        if candidate
+                            .parent()
+                            .is_some_and(|p| !p.as_os_str().is_empty())
+                            && candidate.exists()
+                        {
+                            last_located_failure = Some((candidate, e.to_string()));
+                        }
+                        None
+                    }
+                },
+            )
+            .ok_or_else(|| match last_located_failure {
+                // A library we found and still could not load means PawnIO is present but
+                // broken, which needs a different fix from "go install it".
+                Some((path, detail)) => PawnIoError::LibraryUnusable {
+                    path: path.display().to_string(),
+                    detail,
+                },
+                None => PawnIoError::NotInstalled,
+            })?;
 
         // SAFETY: each symbol's type matches the declaration in PawnIOLib.h, quoted in
         // the module docs. The symbols are leaked into 'static lifetimes, which is sound
@@ -143,6 +293,29 @@ pub fn library_version() -> Result<(u16, u8, u8)> {
         ((raw >> 8) & 0xFF) as u8,
         (raw & 0xFF) as u8,
     ))
+}
+
+/// Directories searched for signed module blobs, best first.
+///
+/// Ours come first so a user can pin a specific module version alongside OpenFan without
+/// touching the PawnIO installation, which may be managed by an installer or another
+/// application.
+pub fn module_search_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        dirs.push(exe_dir.join("modules"));
+        dirs.push(exe_dir.to_path_buf());
+    }
+
+    for install in resolve::install_dirs() {
+        dirs.push(install.join("modules"));
+        dirs.push(install);
+    }
+
+    dirs
 }
 
 /// An open PawnIO executor with one module loaded.
@@ -221,12 +394,53 @@ impl PawnIo {
     /// Read an official signed module from disk and load it.
     pub fn load_module_from_path(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let blob = std::fs::read(path).map_err(|_| PawnIoError::NotInstalled)?;
+        let blob = std::fs::read(path).map_err(|_| PawnIoError::ModuleNotFound {
+            module: path.display().to_string(),
+            searched: path.display().to_string(),
+        })?;
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         Self::load_module(name, &blob)
+    }
+
+    /// Find an official signed module by name (e.g. `LpcIO`) and load it.
+    ///
+    /// Modules are **not** ours to redistribute, so they are read from disk at runtime
+    /// rather than embedded. Note that PawnIO's own installer ships *no* modules — they
+    /// are a separate download — so "module missing" is a routine first-run state that
+    /// deserves its own explanation, not a driver-missing error and not a crash.
+    pub fn load_module_by_name(module_name: &str) -> Result<Self> {
+        let file_name = format!("{module_name}.bin");
+
+        let searched: Vec<std::path::PathBuf> = module_search_dirs()
+            .into_iter()
+            .map(|dir| dir.join(&file_name))
+            .collect();
+
+        match searched.iter().find(|path| path.is_file()) {
+            Some(path) => Self::load_module_from_path(path),
+            None => Err(PawnIoError::ModuleNotFound {
+                module: module_name.to_owned(),
+                searched: searched
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }),
+        }
+    }
+}
+
+impl std::fmt::Debug for PawnIo {
+    // Hand-written rather than derived: the interesting state is which module is loaded,
+    // not a page of function-pointer addresses from `Lib`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PawnIo")
+            .field("module", &self.module)
+            .field("open", &!self.handle.is_null())
+            .finish()
     }
 }
 
@@ -266,6 +480,64 @@ mod tests {
     #[test]
     fn availability_check_is_total() {
         let _ = is_available();
+    }
+
+    #[test]
+    fn nt_prefixed_service_image_paths_resolve_to_the_install_dir() {
+        // The exact value observed on the reference machine.
+        let dir =
+            resolve::image_path_to_dir(r"\??\C:\Program Files\PawnIO\PawnIO.sys", r"C:\Windows");
+        assert_eq!(
+            dir,
+            Some(std::path::PathBuf::from(r"C:\Program Files\PawnIO"))
+        );
+    }
+
+    #[test]
+    fn system_root_and_relative_image_paths_are_rebased_on_the_windows_dir() {
+        // Both spellings the SCM accepts for a driver living under the Windows directory.
+        let expected = Some(std::path::PathBuf::from(r"C:\Windows\System32\drivers"));
+        assert_eq!(
+            resolve::image_path_to_dir(r"\SystemRoot\System32\drivers\x.sys", r"C:\Windows"),
+            expected
+        );
+        assert_eq!(
+            resolve::image_path_to_dir(r"System32\drivers\x.sys", r"C:\Windows"),
+            expected
+        );
+    }
+
+    #[test]
+    fn junk_image_paths_do_not_produce_a_directory() {
+        assert_eq!(resolve::image_path_to_dir("", r"C:\Windows"), None);
+        assert_eq!(resolve::image_path_to_dir("   ", r"C:\Windows"), None);
+    }
+
+    #[test]
+    fn the_bare_library_name_is_always_tried_first() {
+        // Keeps the escape hatch working: a DLL beside our exe, or on PATH, must win over
+        // whatever the registry claims is installed.
+        let candidates = resolve::library_candidates();
+        assert_eq!(candidates[0], std::path::PathBuf::from(resolve::LIB_NAME));
+        assert!(
+            candidates
+                .iter()
+                .all(|c| c.file_name() == Some(resolve::LIB_NAME.as_ref())),
+            "every candidate must name the library: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_module_explains_that_modules_ship_separately() {
+        // The first-run state on a machine with PawnIO installed: driver present, no
+        // module blobs. It must not be reported as a missing driver.
+        let err = PawnIo::load_module_by_name("DefinitelyNotARealModule").unwrap_err();
+        assert!(
+            matches!(err, PawnIoError::ModuleNotFound { .. }),
+            "unexpected error kind: {err}"
+        );
+        let text = err.to_string();
+        assert!(text.contains("PawnIO.Modules"), "{text}");
     }
 
     #[test]
