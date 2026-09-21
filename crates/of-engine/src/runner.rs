@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use of_core::{Graph, GraphError};
 use parking_lot::Mutex;
 
-use crate::engine::{Engine, EngineConfig, TickReport};
+use crate::engine::{Engine, EngineConfig, Inventory, TickReport};
 use crate::policy::SafetyPolicy;
 
 /// A published view of the engine's most recent tick, for the UI.
@@ -54,6 +54,10 @@ enum Command {
 pub struct EngineHandle {
     commands: Sender<Command>,
     snapshot: Arc<Mutex<Snapshot>>,
+    /// The graph the engine is actually running. Published by the loop after a
+    /// successful install, so a reader can never see an edit that was rejected.
+    graph: Arc<Mutex<Graph>>,
+    inventory: Arc<Mutex<Inventory>>,
     running: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -64,9 +68,13 @@ impl EngineHandle {
         let config = engine.config();
         let (tx, rx) = channel::<Command>();
         let snapshot = Arc::new(Mutex::new(Snapshot::default()));
+        let graph = Arc::new(Mutex::new(engine.graph().clone()));
+        let inventory = Arc::new(Mutex::new(engine.inventory()));
         let running = Arc::new(AtomicBool::new(true));
 
         let thread_snapshot = Arc::clone(&snapshot);
+        let thread_graph = Arc::clone(&graph);
+        let thread_inventory = Arc::clone(&inventory);
         let thread_running = Arc::clone(&running);
 
         let thread = thread::Builder::new()
@@ -79,7 +87,11 @@ impl EngineHandle {
                 run_loop(
                     &mut owner.engine,
                     &rx,
-                    &thread_snapshot,
+                    &Published {
+                        snapshot: thread_snapshot,
+                        graph: thread_graph,
+                        inventory: thread_inventory,
+                    },
                     &thread_running,
                     config,
                 );
@@ -89,9 +101,21 @@ impl EngineHandle {
         Self {
             commands: tx,
             snapshot,
+            graph,
+            inventory,
             running,
             thread: Some(thread),
         }
+    }
+
+    /// The graph the engine is running.
+    pub fn graph(&self) -> Graph {
+        self.graph.lock().clone()
+    }
+
+    /// What the backend can see.
+    pub fn inventory(&self) -> Inventory {
+        self.inventory.lock().clone()
     }
 
     /// Most recent published tick.
@@ -159,10 +183,17 @@ impl Drop for ControlThread {
     }
 }
 
+/// The state the loop publishes for readers outside the control thread.
+struct Published {
+    snapshot: Arc<Mutex<Snapshot>>,
+    graph: Arc<Mutex<Graph>>,
+    inventory: Arc<Mutex<Inventory>>,
+}
+
 fn run_loop(
     engine: &mut Engine,
     commands: &Receiver<Command>,
-    snapshot: &Arc<Mutex<Snapshot>>,
+    published: &Published,
     running: &Arc<AtomicBool>,
     config: EngineConfig,
 ) {
@@ -179,10 +210,19 @@ fn run_loop(
         loop {
             match commands.try_recv() {
                 Ok(Command::SetGraph(graph, reply)) => {
-                    let _ = reply.send(engine.set_graph(graph));
+                    let outcome = engine.set_graph(graph);
+                    // Publish only on success: a reader must never observe a graph the
+                    // engine refused to run.
+                    if outcome.is_ok() {
+                        *published.graph.lock() = engine.graph().clone();
+                    }
+                    let _ = reply.send(outcome);
                 }
                 Ok(Command::SetPolicy(policy)) => engine.set_policy(policy),
-                Ok(Command::Rescan) => engine.rescan(),
+                Ok(Command::Rescan) => {
+                    engine.rescan();
+                    *published.inventory.lock() = engine.inventory();
+                }
                 Err(TryRecvError::Empty) => break,
                 // The handle is gone; the guard will hand the channels back.
                 Err(TryRecvError::Disconnected) => return,
@@ -201,7 +241,7 @@ fn run_loop(
         }
         sequence += 1;
 
-        *snapshot.lock() = Snapshot {
+        *published.snapshot.lock() = Snapshot {
             report,
             sequence,
             tick_duration_ms: elapsed.as_secs_f64() * 1000.0,

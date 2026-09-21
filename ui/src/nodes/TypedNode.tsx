@@ -1,31 +1,27 @@
 /**
  * A graph node rendered from its typed port signature.
  *
- * Every node in OpenFan is drawn by this one component: the node's ports come from the
- * backend's `NodeKind::spec()`, so the editor never hard-codes what a node looks like and
- * a new node kind needs no new React.
+ * Every node in OpenFan is drawn by this one component: a node's ports come from the
+ * backend's catalogue, so the editor never hard-codes what a node looks like and a new
+ * node kind needs no new React.
  *
  * The port type is communicated three ways — colour, the unit symbol on the handle, and
  * the port's label — so the graph stays readable without relying on colour alone.
  */
-import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { formatValue, styleOf, type Quantity } from '../quantities';
+import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 
-export interface TypedPort {
-  key: string;
-  label: string;
-  quantity: Quantity;
-  /** Variadic inputs accept any number of incoming connections. */
-  variadic?: boolean;
-}
+import type { PortDto } from '../api';
+import { formatValue, styleOf } from '../quantities';
 
 export interface TypedNodeData extends Record<string, unknown> {
   title: string;
   subtitle?: string;
-  inputs: TypedPort[];
-  outputs: TypedPort[];
-  /** Live value per output port key, streamed from the backend's tick.  */
+  inputs: PortDto[];
+  outputs: PortDto[];
+  /** Live value per output port key, from the engine's most recent tick. */
   readouts?: Record<string, number>;
+  /** Validation messages the backend attributed to this node. */
+  errors?: string[];
 }
 
 export type TypedNodeType = Node<TypedNodeData, 'typed'>;
@@ -35,7 +31,7 @@ function PortRow({
   side,
   readout,
 }: {
-  port: TypedPort;
+  port: PortDto;
   side: 'input' | 'output';
   readout?: number;
 }) {
@@ -63,8 +59,18 @@ function PortRow({
 }
 
 export default function TypedNode({ data, selected }: NodeProps<TypedNodeType>) {
+  const faulted = data.errors && data.errors.length > 0;
+
   return (
-    <div className={`typed-node${selected ? ' typed-node--selected' : ''}`}>
+    <div
+      className={[
+        'typed-node',
+        selected ? 'typed-node--selected' : '',
+        faulted ? 'typed-node--error' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       <header className="typed-node__header">
         <span className="typed-node__title">{data.title}</span>
         {data.subtitle && <span className="typed-node__subtitle">{data.subtitle}</span>}
@@ -83,6 +89,16 @@ export default function TypedNode({ data, selected }: NodeProps<TypedNodeType>) 
           />
         ))}
       </div>
+
+      {/* Errors are shown inline rather than in a tooltip: the whole point of reporting
+          every problem at once is that they are all visible at once. */}
+      {faulted && (
+        <ul className="typed-node__errors">
+          {data.errors?.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

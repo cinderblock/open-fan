@@ -25,6 +25,6 @@ pub mod engine;
 pub mod policy;
 pub mod runner;
 
-pub use engine::{Engine, EngineConfig, SensorSnapshot, TickReport};
+pub use engine::{Engine, EngineConfig, Inventory, SensorSnapshot, TickReport};
 pub use policy::{Applied, ChannelPolicy, FailsafeAction, SafetyPolicy, apply_tick, dying_breath};
 pub use runner::{EngineHandle, Snapshot};

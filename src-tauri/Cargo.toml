@@ -23,6 +23,7 @@ of-engine = { workspace = true }
 of-hal = { workspace = true }
 of-hal-mock = { workspace = true }
 of-units = { workspace = true }
+of-ipc = { workspace = true }
 
 tauri = { version = "2.11.6", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2.4.5"

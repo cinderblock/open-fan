@@ -232,13 +232,12 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
       with tray / single-instance / autostart / hide-on-close, React + React Flow editor
       enforcing the type system, generated TypeScript bindings, GitHub Actions CI and
       release workflows, `cargo-deny` licence and WinRing0 ban.
-- [~] **Phase 2 — Graph core.** *Partly done.*
-      Done: 16-node catalogue with time-aware stateful nodes, the `Engine` (ticks when
-      told, reads no clock) and the `runner` control loop on its own thread, TypeScript
-      generated from the persisted graph types.
-      Remaining: the `of-ipc` DTO layer, Tauri commands exposing catalogue/graph/snapshot,
-      and wiring the editor to the backend document with live readouts. Deliberately left
-      for a session without hardware to risk — see `phase-3-hardware-bringup.md`.
+- [x] **Phase 2 — Graph core.** 16-node catalogue with time-aware stateful nodes; the
+      `Engine` (ticks when told, reads no clock) and the `runner` control loop on its own
+      thread; `of-ipc` DTOs with TypeScript generated from the Rust definitions; Tauri
+      commands for catalogue / inventory / graph / snapshot; the editor wired to the
+      backend document with a node palette, live readouts and validation errors shown
+      against the nodes that caused them.
 - [ ] **Phase 3 — Real hardware.** ← *current step, on the target machine.*
       Briefed in [`phase-3-hardware-bringup.md`](phase-3-hardware-bringup.md).
 - [ ] **Phase 4 — Safety.** Supervisor layers 1–6, dying breath, external watchdog,
@@ -333,3 +332,23 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
 - **2026-09-21** — Handed off to the target machine for Phase 3; see
   `phase-3-hardware-bringup.md`. Phase 2's UI wiring intentionally left unfinished so the
   hardware session is not also editing the frontend.
+- **2026-09-21** — Phase 2 complete. The editor now reads and writes the backend's
+  document rather than a local demo. Notes for later:
+  - **The UI polls; it does not subscribe.** A subscription would make the control loop
+    responsible for pushing to a consumer that can be slow, suspended or gone. Polling
+    keeps the dependency pointing the right way, and a wedged window costs the engine
+    nothing. 250 ms is plenty for a 10 Hz loop.
+  - **Edits are staged and applied explicitly.** A half-wired graph is a normal state
+    while building one, and not a state the engine should be asked to run. Apply returns
+    every validation error at once, each attributed to a node so the editor can mark them
+    in place.
+  - **A node's ports come from the backend catalogue**, re-typed from the instance's own
+    parameters. The editor has no independent idea of what a node looks like, so it cannot
+    offer a connection the backend would reject.
+  - `NodeDescriptor.template` is a complete, valid `NodeKind`, so a node dropped from the
+    palette is never born faulted.
+  - Gotcha for future sessions: `#[tauri::command]` on a `pub fn` **in the crate root**
+    fails to compile — the macro's generated re-export collides with the definition
+    (`E0255`). Commands live in `src-tauri/src/commands.rs` for this reason.
+  - `OPENFAN_MOCK=1` forces the simulated backend even where real hardware exists. That is
+    the safe way to exercise the UI on a machine you do not want to experiment on.

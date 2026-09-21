@@ -1,16 +1,422 @@
-//! Shared types between the OpenFan backend and its UI.
+//! Types shared between the OpenFan backend and its editor.
 //!
-//! TypeScript definitions are generated from these types with `ts-rs` (`cargo test -p
-//! of-ipc` writes them), so the frontend cannot drift from the backend's idea of the
-//! protocol without the build noticing.
+//! TypeScript is generated from these definitions (`bun run bindings`) and committed, so
+//! the editor cannot drift from the backend's idea of the protocol without the build
+//! noticing.
 //!
-//! # Status
+//! # What belongs here
 //!
-//! Phase 1 scaffold. The command and event vocabulary fills in alongside the Tauri
-//! commands in Phase 2.
+//! Two different things, kept deliberately separate:
+//!
+//! - **The document.** [`of_core::Graph`] and friends are re-exported as-is. The editor
+//!   reads and writes the same structure the backend persists — there is no translation
+//!   layer to fall out of sync, and no second definition of what a node is.
+//! - **Views and descriptors.** The node catalogue and the tick snapshot are *derived*
+//!   from backend state rather than stored, so they get DTOs. `PortSpec` in particular
+//!   holds `&'static str` fields owned by the catalogue; it is not part of the document
+//!   and is carried across as [`PortDto`].
+//!
+//! Nothing here makes a control decision. These are the shapes the UI is allowed to see.
 
 #![forbid(unsafe_code)]
 
-// Re-exported so the UI's generated bindings and the backend agree on one definition of
-// the port type system rather than two.
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+pub use of_core::{CurvePoint, Edge, Graph, MixMode, NodeId, NodeInstance, NodeKind, PortRef};
 pub use of_units::{Quantity, Value};
+
+/// Shorthand for the ts-rs attributes every exported type carries.
+macro_rules! dto {
+    ($(#[$meta:meta])* pub struct $name:ident { $($body:tt)* }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+        #[ts(export, export_to = "../../../ui/src/bindings/")]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name { $($body)* }
+    };
+}
+
+dto! {
+    /// One typed port, as the editor sees it.
+    pub struct PortDto {
+        pub key: String,
+        pub label: String,
+        pub quantity: Quantity,
+        /// A required input left unconnected makes the graph invalid.
+        pub required: bool,
+        /// A variadic input accepts any number of incoming connections.
+        pub variadic: bool,
+    }
+}
+
+dto! {
+    /// A node kind the editor can offer in its palette.
+    ///
+    /// `template` is a complete, immediately-valid [`NodeKind`], so adding a node from the
+    /// palette never produces a half-configured node the backend would reject.
+    pub struct NodeDescriptor {
+        /// Stable discriminator, matching the serde tag of [`NodeKind`].
+        pub kind: String,
+        pub label: String,
+        pub category: NodeCategory,
+        /// One line explaining what the node is for.
+        pub description: String,
+        pub template: NodeKind,
+        pub inputs: Vec<PortDto>,
+        pub outputs: Vec<PortDto>,
+    }
+}
+
+/// How the palette groups a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeCategory {
+    /// Produces values: sensors, constants.
+    Source,
+    /// Reshapes values without memory.
+    Transform,
+    /// Reshapes values using history — filters, limiters, controllers.
+    Stateful,
+    /// Boolean tests and routing.
+    Logic,
+    /// Drives hardware.
+    Sink,
+}
+
+dto! {
+    /// A sensor the active backend can read.
+    pub struct SensorDto {
+        pub id: String,
+        pub label: String,
+        pub quantity: Quantity,
+    }
+}
+
+dto! {
+    /// An output channel the active backend can drive.
+    pub struct ChannelDto {
+        pub id: String,
+        pub label: String,
+        /// The tachometer that reads this channel back, when one is wired to it.
+        pub tachometer: Option<String>,
+        /// Lowest duty the device reliably spins at, once known.
+        pub min_reliable_duty: Option<f64>,
+    }
+}
+
+dto! {
+    /// What the backend can see on this machine.
+    pub struct HardwareInventory {
+        pub backend: String,
+        pub sensors: Vec<SensorDto>,
+        pub channels: Vec<ChannelDto>,
+        /// True when kernel-level hardware access is available.
+        pub driver_present: bool,
+        /// A sentence the UI can show verbatim when it is not.
+        pub driver_summary: String,
+    }
+}
+
+dto! {
+    /// One value on one wire, flattened for transport.
+    ///
+    /// `PortRef` is a struct and would be an awkward object key in JSON, so wire values
+    /// travel as a list the editor indexes by `nodeId`/`port`.
+    pub struct WireValue {
+        pub node_id: String,
+        pub port: String,
+        pub quantity: Quantity,
+        /// `None` when the value is not finite — a fault, not a number.
+        pub value: Option<f64>,
+    }
+}
+
+dto! {
+    /// The engine's most recent tick, as the editor sees it.
+    pub struct SnapshotDto {
+        /// Monotonic tick counter. Unchanged between reads means the loop has not ticked.
+        pub sequence: u64,
+        /// Seconds the last tick was evaluated over.
+        pub dt: f64,
+        pub tick_duration_ms: f64,
+        /// Ticks that overran their period. Rising means the tick rate is too high.
+        pub overruns: u64,
+        /// True when no graph was evaluated and every channel was failsafed.
+        pub degraded: bool,
+        /// Why, when degraded because the sensors could not be read.
+        pub sensor_error: Option<String>,
+        pub sensors: Vec<WireValue>,
+        pub wires: Vec<WireValue>,
+        /// Duty actually written to each channel this tick.
+        pub commanded: BTreeMap<String, f64>,
+        /// Channels put into their failsafe this tick.
+        pub failsafed: Vec<String>,
+    }
+}
+
+dto! {
+    /// A rejected graph edit.
+    pub struct ValidationError {
+        /// Human-readable, already explaining what to do about it.
+        pub message: String,
+        /// The node to highlight, when the error names one.
+        pub node_id: Option<String>,
+    }
+}
+
+impl WireValue {
+    /// Build from a port reference and a value, mapping non-finite to `None`.
+    ///
+    /// The editor must not be able to render a NaN as though it were a reading, so the
+    /// distinction is made here rather than left to the frontend to remember.
+    pub fn new(port: &PortRef, value: &Value) -> Self {
+        Self {
+            node_id: port.node.0.clone(),
+            port: port.port.clone(),
+            quantity: value.quantity,
+            value: value.is_trustworthy().then_some(value.scalar),
+        }
+    }
+
+    /// Build from a sensor id rather than a graph port.
+    pub fn sensor(id: &str, value: &Value) -> Self {
+        Self {
+            node_id: id.to_owned(),
+            port: String::new(),
+            quantity: value.quantity,
+            value: value.is_trustworthy().then_some(value.scalar),
+        }
+    }
+}
+
+/// Convert a backend port specification into its transport form.
+pub fn port_dto(spec: &of_core::PortSpec) -> PortDto {
+    PortDto {
+        key: spec.key.to_owned(),
+        label: spec.label.to_owned(),
+        quantity: spec.quantity,
+        required: spec.required,
+        variadic: spec.variadic,
+    }
+}
+
+/// Build a descriptor for one node kind.
+fn descriptor(category: NodeCategory, description: &str, template: NodeKind) -> NodeDescriptor {
+    let spec = template.spec();
+    // The serde tag is the stable identity of the kind; derive it rather than repeating
+    // it, so a rename cannot leave the palette pointing at a kind that no longer exists.
+    let kind = serde_json::to_value(&template)
+        .ok()
+        .and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_owned))
+        .unwrap_or_default();
+
+    NodeDescriptor {
+        kind,
+        label: template.default_label().to_owned(),
+        category,
+        description: description.to_owned(),
+        inputs: spec.inputs.iter().map(port_dto).collect(),
+        outputs: spec.outputs.iter().map(port_dto).collect(),
+        template,
+    }
+}
+
+/// The palette the editor offers.
+///
+/// Templates are chosen to be immediately useful: a Curve that already rises from 30 °C
+/// to 80 °C is a working starting point, whereas an empty one would evaluate to a fault
+/// the moment it was added.
+pub fn catalogue() -> Vec<NodeDescriptor> {
+    use NodeCategory::*;
+    use Quantity as Q;
+
+    vec![
+        descriptor(
+            Source,
+            "Reads a hardware sensor.",
+            NodeKind::Sensor {
+                sensor_id: String::new(),
+                quantity: Q::Temperature,
+            },
+        ),
+        descriptor(
+            Source,
+            "Emits a fixed value. Also backs a manual slider.",
+            NodeKind::Constant {
+                quantity: Q::Duty,
+                value: 50.0,
+            },
+        ),
+        descriptor(
+            Transform,
+            "Maps a temperature onto a duty along a transfer curve.",
+            NodeKind::Curve {
+                input: Q::Temperature,
+                points: vec![
+                    CurvePoint { x: 30.0, y: 20.0 },
+                    CurvePoint { x: 80.0, y: 100.0 },
+                ],
+            },
+        ),
+        descriptor(
+            Transform,
+            "Combines several inputs of the same type into one.",
+            NodeKind::Mix {
+                quantity: Q::Temperature,
+                mode: MixMode::Max,
+            },
+        ),
+        descriptor(
+            Transform,
+            "Constrains a value to a range.",
+            NodeKind::Clamp {
+                quantity: Q::Duty,
+                min: 20.0,
+                max: 100.0,
+            },
+        ),
+        descriptor(
+            Transform,
+            "Adds a constant.",
+            NodeKind::Offset {
+                quantity: Q::Temperature,
+                delta: 0.0,
+            },
+        ),
+        descriptor(
+            Transform,
+            "Multiplies by a constant.",
+            NodeKind::Scale {
+                quantity: Q::Duty,
+                factor: 1.0,
+            },
+        ),
+        descriptor(
+            Transform,
+            "Reads a value as a different type. The explicit way across the type system.",
+            NodeKind::Reinterpret {
+                from: Q::Load,
+                to: Q::Duty,
+            },
+        ),
+        descriptor(
+            Stateful,
+            "Limits how fast a value may change, per second.",
+            NodeKind::RateLimit {
+                quantity: Q::Duty,
+                max_delta_per_second: 10.0,
+            },
+        ),
+        descriptor(
+            Stateful,
+            "Smooths a signal with a time constant in seconds.",
+            NodeKind::LowPass {
+                quantity: Q::Temperature,
+                tau_seconds: 5.0,
+            },
+        ),
+        descriptor(
+            Stateful,
+            "Averages the most recent samples.",
+            NodeKind::MovingAverage {
+                quantity: Q::Temperature,
+                samples: 10,
+            },
+        ),
+        descriptor(
+            Stateful,
+            "Holds its output until the input moves outside a band. Stops fans twitching at sensor noise.",
+            NodeKind::Hold {
+                quantity: Q::Temperature,
+                band: 1.0,
+            },
+        ),
+        descriptor(
+            Logic,
+            "Tests a value against a threshold, with a deadband so it cannot chatter.",
+            NodeKind::Comparator {
+                quantity: Q::Temperature,
+                threshold: 70.0,
+                deadband: 4.0,
+                direction: of_core::Compare::Above,
+            },
+        ),
+        descriptor(
+            Logic,
+            "Chooses between two inputs.",
+            NodeKind::Select { quantity: Q::Duty },
+        ),
+        descriptor(
+            Stateful,
+            "Holds a temperature at a setpoint. The integral is bounded so it cannot wind up.",
+            NodeKind::Pid {
+                quantity: Q::Temperature,
+                setpoint: 65.0,
+                kp: 4.0,
+                ki: 0.2,
+                kd: 0.0,
+                integral_limit: 40.0,
+            },
+        ),
+        descriptor(
+            Sink,
+            "Drives a fan or pump channel.",
+            NodeKind::FanOutput {
+                channel: String::new(),
+            },
+        ),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_catalogue_covers_every_node_kind() {
+        // If a variant is added without a palette entry it is unreachable from the UI.
+        // 16 kinds today; this number moving is a prompt to add the descriptor, not to
+        // bump the constant.
+        assert_eq!(catalogue().len(), 16);
+    }
+
+    #[test]
+    fn every_descriptor_has_a_stable_kind_tag() {
+        for d in catalogue() {
+            assert!(!d.kind.is_empty(), "{} has no kind tag", d.label);
+            // The tag must match what the document format actually serializes, or the
+            // palette would produce nodes the backend cannot identify.
+            let json = serde_json::to_value(&d.template).unwrap();
+            assert_eq!(json["kind"].as_str().unwrap(), d.kind);
+        }
+    }
+
+    #[test]
+    fn every_template_is_valid_on_its_own_terms() {
+        // A palette entry that evaluates to a fault the instant it is added would teach
+        // users that fault markers are normal. Templates carry usable defaults.
+        for d in catalogue() {
+            let spec = d.template.spec();
+            assert_eq!(spec.inputs.len(), d.inputs.len());
+            assert_eq!(spec.outputs.len(), d.outputs.len());
+            if let NodeKind::Curve { points, .. } = &d.template {
+                assert!(!points.is_empty(), "the curve template must have points");
+            }
+        }
+    }
+
+    #[test]
+    fn a_faulted_wire_carries_no_number() {
+        let port = PortRef::new("n", "out");
+        let bad = WireValue::new(&port, &Value::raw(Quantity::Duty, f64::NAN));
+        assert_eq!(bad.value, None, "NaN must not reach the UI as a reading");
+
+        let good = WireValue::new(&port, &Value::raw(Quantity::Duty, 42.0));
+        assert_eq!(good.value, Some(42.0));
+        assert_eq!(good.node_id, "n");
+        assert_eq!(good.port, "out");
+    }
+}

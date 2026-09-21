@@ -12,49 +12,15 @@
 //! Phase 1 scaffold: tray, single-instance, autostart and hide-on-close are wired.
 //! Starting the engine's tick loop and streaming its state to the UI is Phase 2.
 
+pub mod commands;
+pub mod state;
+
+use state::AppState;
 use tauri::{
     AppHandle, Manager, WindowEvent,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
 };
-
-/// Whether kernel-level hardware access is available on this machine.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct HardwareStatus {
-    /// True when the driver OpenFan needs for sensor and PWM access is installed.
-    pub driver_present: bool,
-    /// Driver version, when it could be read.
-    pub driver_version: Option<String>,
-    /// A sentence the UI can show the user verbatim.
-    pub summary: String,
-}
-
-#[tauri::command]
-fn hardware_status() -> HardwareStatus {
-    #[cfg(windows)]
-    {
-        match of_hal_pawnio::library_version() {
-            Ok((major, minor, patch)) => HardwareStatus {
-                driver_present: true,
-                driver_version: Some(format!("{major}.{minor}.{patch}")),
-                summary: "Hardware access is available.".into(),
-            },
-            Err(err) => HardwareStatus {
-                driver_present: false,
-                driver_version: None,
-                // The error types carry install guidance; surface it rather than a code.
-                summary: err.to_string(),
-            },
-        }
-    }
-
-    #[cfg(not(windows))]
-    HardwareStatus {
-        driver_present: false,
-        driver_version: None,
-        summary: "Hardware access on this platform is not implemented yet.".into(),
-    }
-}
 
 /// Bring the editor window back, creating nothing — the window always exists, it is only
 /// ever hidden.
@@ -90,6 +56,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 // be handed back to the firmware before the process goes away. Quitting
                 // is the one exit path we fully control, so it must be the cleanest.
                 tracing::info!("quit requested from tray");
+                // Dropping the state joins the control thread, which hands every
+                // channel back before the process goes away. Phase 4 extends this to
+                // the Windows shutdown and logoff paths.
                 app.exit(0);
             }
             other => tracing::warn!(id = other, "unhandled tray menu item"),
@@ -120,6 +89,10 @@ pub fn run() {
         .setup(|app| {
             build_tray(app.handle())?;
 
+            // The control loop starts here, before the window is shown, and keeps
+            // running whatever happens to the webview afterwards.
+            app.manage(AppState::new());
+
             // Launched by autostart: come up in the tray without stealing focus.
             if std::env::args().any(|arg| arg == "--minimized")
                 && let Some(window) = app.get_webview_window("main")
@@ -137,7 +110,15 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![hardware_status])
+        .invoke_handler(tauri::generate_handler![
+            commands::hardware_status,
+            commands::node_catalogue,
+            commands::inventory,
+            commands::get_graph,
+            commands::set_graph,
+            commands::rescan,
+            commands::snapshot,
+        ])
         .run(tauri::generate_context!())
         .expect("failed to start OpenFan");
 }

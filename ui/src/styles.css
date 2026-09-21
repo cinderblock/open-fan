@@ -1,10 +1,15 @@
 :root {
   --bg: #14171c;
   --panel: #1c2027;
+  --panel-raised: #222831;
   --panel-border: #2b313a;
   --text: #e6e9ee;
   --text-dim: #99a2ad;
   --accent: #3d9ae8;
+  --ok: #4bbf9a;
+  --warn: #d9a03c;
+  --danger: #e8663d;
+  --sidebar-width: 310px;
   color-scheme: dark;
 }
 
@@ -32,12 +37,40 @@ body {
 .app {
   position: relative;
   height: 100%;
+  /* The canvas fills the window; the sidebar overlays its right edge so the graph keeps
+     the full area when panning. */
+  padding-right: var(--sidebar-width);
+}
+
+.app--message {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.message {
+  max-width: 460px;
+  padding: 22px 26px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+}
+
+.message h1 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.message p {
+  margin: 0;
+  color: var(--text-dim);
 }
 
 /* --- Nodes ------------------------------------------------------------------ */
 
 .typed-node {
   min-width: 190px;
+  max-width: 280px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 8px;
@@ -49,12 +82,16 @@ body {
   border-color: var(--accent);
 }
 
+.typed-node--error {
+  border-color: var(--danger);
+}
+
 .typed-node__header {
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: 7px 11px;
-  background: #222831;
+  background: var(--panel-raised);
   border-bottom: 1px solid var(--panel-border);
 }
 
@@ -65,6 +102,7 @@ body {
 .typed-node__subtitle {
   font-size: 11px;
   color: var(--text-dim);
+  overflow-wrap: anywhere;
 }
 
 .typed-node__ports {
@@ -72,6 +110,15 @@ body {
   flex-direction: column;
   gap: 2px;
   padding: 7px 0;
+}
+
+.typed-node__errors {
+  margin: 0;
+  padding: 7px 11px 9px 26px;
+  border-top: 1px solid var(--panel-border);
+  background: #34222522;
+  color: var(--danger);
+  font-size: 11px;
 }
 
 .port-row {
@@ -103,10 +150,13 @@ body {
 .port-readout {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
+  color: var(--text);
+  background: #0f1216;
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
-/* Handles are given a distinct outline as well as a colour, so the port type is not
+/* Handles carry a distinct outline as well as a colour, so the port type is never
    conveyed by hue alone. Variadic inputs are square to mark that they take many. */
 .port-handle {
   width: 10px;
@@ -119,30 +169,232 @@ body {
   border-radius: 2px;
 }
 
-/* --- Legend ----------------------------------------------------------------- */
+/* --- Sidebar ---------------------------------------------------------------- */
 
-.legend {
+.sidebar {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 210px;
-  padding: 11px 13px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  top: 0;
+  right: 0;
+  width: var(--sidebar-width);
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--panel);
+  border-left: 1px solid var(--panel-border);
   z-index: 5;
 }
 
-.legend__title {
-  margin: 0 0 5px;
-  font-size: 12px;
+.sidebar__header {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sidebar__title {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.01em;
+}
+
+.sidebar__driver {
+  margin: 0;
+  padding: 7px 9px;
+  background: #3a2f23;
+  border: 1px solid #6b5334;
+  border-radius: 6px;
+  color: #e8c98b;
+  font-size: 11px;
+}
+
+.sidebar__heading {
+  margin: 0 0 6px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
 }
 
+/* --- Engine status ---------------------------------------------------------- */
+
+.status {
+  padding: 10px 11px;
+  border: 1px solid var(--panel-border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--panel-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.status--ok {
+  border-left-color: var(--ok);
+}
+
+.status--idle {
+  border-left-color: var(--text-dim);
+}
+
+.status--degraded {
+  border-left-color: var(--danger);
+}
+
+.status--unknown {
+  border-left-color: var(--warn);
+  color: var(--text-dim);
+}
+
+.status__headline {
+  font-weight: 600;
+}
+
+.status__detail {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.status__channels {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+
+.status__channels li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.status__channel {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.status__duty {
+  font-variant-numeric: tabular-nums;
+}
+
+.status__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.status__warn {
+  color: var(--warn);
+}
+
+/* --- Actions ---------------------------------------------------------------- */
+
+.sidebar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.button {
+  flex: 1 1 auto;
+  padding: 7px 10px;
+  background: var(--panel-raised);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.button--primary:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #08121b;
+  font-weight: 600;
+}
+
+/* --- Validation errors ------------------------------------------------------- */
+
+.errors {
+  padding: 10px 11px;
+  background: #3a2326;
+  border: 1px solid #6b3a3f;
+  border-radius: 6px;
+}
+
+.errors__title {
+  margin: 0 0 5px;
+  font-size: 12px;
+}
+
+.errors__list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  display: grid;
+  gap: 3px;
+}
+
+/* --- Palette ----------------------------------------------------------------- */
+
+.palette__group {
+  margin-bottom: 10px;
+}
+
+.palette__category {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.palette__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 6px 9px;
+  text-align: left;
+  background: var(--panel-raised);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.palette__item:hover {
+  border-color: var(--accent);
+}
+
+.palette__label {
+  font-weight: 600;
+}
+
+.palette__description {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* --- Legend ------------------------------------------------------------------ */
+
 .legend__hint {
-  margin: 0 0 9px;
+  margin: 0 0 8px;
   font-size: 11px;
   color: var(--text-dim);
 }
@@ -178,12 +430,12 @@ body {
   font-size: 11px;
 }
 
-/* --- Rejection notice -------------------------------------------------------- */
+/* --- Rejection notice --------------------------------------------------------- */
 
 .rejection {
   position: absolute;
   bottom: 18px;
-  left: 50%;
+  left: calc(50% - var(--sidebar-width) / 2);
   transform: translateX(-50%);
   display: flex;
   align-items: center;

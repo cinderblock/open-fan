@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use of_core::{CompiledGraph, EvalState, Graph, GraphError, PortRef, SensorReadings};
-use of_hal::{Backend, ChannelId, SensorId, SensorKind};
+use of_hal::{Backend, ChannelId, ChannelInfo, SensorId, SensorInfo, SensorKind};
 use of_units::{Quantity, Value};
 
 use crate::policy::{Applied, SafetyPolicy, apply_tick, dying_breath};
@@ -75,6 +75,19 @@ pub struct TickReport {
     pub degraded: bool,
 }
 
+/// What the active backend can see on this machine.
+///
+/// Captured at construction and refreshed by [`Engine::rescan`]. The editor renders this
+/// to offer sensors and channels, so it is a view rather than part of the document: a
+/// profile referencing a sensor that is no longer present must still load, and fail
+/// loudly at the sensor instead of refusing to open.
+#[derive(Debug, Clone, Default)]
+pub struct Inventory {
+    pub backend: String,
+    pub sensors: Vec<SensorInfo>,
+    pub channels: Vec<ChannelInfo>,
+}
+
 /// Owns the backend and the active graph.
 pub struct Engine {
     backend: Box<dyn Backend>,
@@ -113,6 +126,15 @@ impl Engine {
 
     pub fn backend_name(&self) -> String {
         self.backend.name()
+    }
+
+    /// Everything the backend advertises, for the editor's pickers.
+    pub fn inventory(&self) -> Inventory {
+        Inventory {
+            backend: self.backend.name(),
+            sensors: self.backend.sensors().unwrap_or_default(),
+            channels: self.backend.channels().unwrap_or_default(),
+        }
     }
 
     pub fn config(&self) -> EngineConfig {
