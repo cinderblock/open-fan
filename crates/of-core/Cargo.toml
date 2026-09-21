@@ -13,6 +13,13 @@ of-units = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 petgraph = { workspace = true }
+ts-rs = { workspace = true, optional = true }
+
+[features]
+default = []
+# Emit TypeScript for the persisted graph types, so the editor and the backend
+# cannot disagree about the document format.
+ts = ["dep:ts-rs", "of-units/ts"]
 
 [dev-dependencies]
 # Profiles are persisted as JSON; the catalogue round-trip test needs it.

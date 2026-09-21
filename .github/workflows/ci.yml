@@ -41,7 +41,7 @@ jobs:
       - name: Clippy
         # of-hal-pawnio is Windows-only; on Linux the rest of the workspace must still
         # lint cleanly without it.
-        run: cargo clippy --workspace --all-targets --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio' || '' }}
+        run: cargo clippy --workspace --all-features --all-targets --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio' || '' }}
 
       - name: Test
         run: cargo test --workspace --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio' || '' }}

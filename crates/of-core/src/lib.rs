@@ -24,6 +24,11 @@ pub use node::{Compare, CurvePoint, MixMode, NodeKind, NodeSpec, PortSpec, TickI
 /// Identifier for a node instance. Strings, because they round-trip to the editor and
 /// survive being hand-edited in a saved profile.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 #[serde(transparent)]
 pub struct NodeId(pub String);
 
@@ -41,6 +46,11 @@ impl std::fmt::Display for NodeId {
 
 /// Identifies one port on one node. Port keys are stable strings owned by the node kind.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 pub struct PortRef {
     pub node: NodeId,
     pub port: String,
@@ -63,6 +73,11 @@ impl std::fmt::Display for PortRef {
 
 /// A typed connection from one node's output to another node's input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 pub struct Edge {
     pub from: PortRef,
     pub to: PortRef,
@@ -70,6 +85,11 @@ pub struct Edge {
 
 /// A node instance: its kind (which carries the node's parameters) plus editor metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 pub struct NodeInstance {
     pub kind: NodeKind,
     /// User-visible name. Falls back to the kind's default label when empty.
@@ -101,6 +121,11 @@ impl NodeInstance {
 
 /// An editable fan-control graph. May be invalid; call [`Graph::validate`] to find out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 pub struct Graph {
     pub nodes: BTreeMap<NodeId, NodeInstance>,
     pub edges: Vec<Edge>,

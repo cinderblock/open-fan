@@ -88,6 +88,11 @@ pub struct TickInput<'a> {
 
 /// How a mixer combines its inputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum MixMode {
     /// The safe default for cooling: the hottest input wins.
@@ -99,6 +104,11 @@ pub enum MixMode {
 
 /// One point on a transfer curve.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 pub struct CurvePoint {
     pub x: f64,
     pub y: f64,
@@ -106,6 +116,11 @@ pub struct CurvePoint {
 
 /// How a comparator's output relates to its threshold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Compare {
     Above,
@@ -140,6 +155,11 @@ pub struct NodeState {
 
 /// A node's kind and its parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../ui/src/bindings/")
+)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum NodeKind {
     // --- Sources ---------------------------------------------------------------------

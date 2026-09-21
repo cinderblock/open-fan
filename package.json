@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "bindings": "cargo test -p of-units --features ts",
+    "bindings": "cargo test -p of-units --features ts && cargo test -p of-core --features ts",
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/make-icon.mjs && tauri icon assets/icon-source.png",
     "tauri": "tauri"
