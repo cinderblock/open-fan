@@ -23,6 +23,8 @@
 //! once the reference machine is known (see `plans/open-fan.md`, Open Question 1).
 
 #[cfg(windows)]
+mod backend;
+#[cfg(windows)]
 mod ffi;
 #[cfg(windows)]
 pub mod isa;
@@ -32,6 +34,7 @@ pub mod lpc;
 pub mod nct6775;
 
 #[cfg(windows)]
+pub use backend::SuperIoBackend;
 pub use ffi::{
     PawnIo, PawnIoError, is_available, library_version, module_cache_dir, module_search_dirs,
 };

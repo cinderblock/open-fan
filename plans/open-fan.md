@@ -428,6 +428,59 @@ Useful consequences:
 - The 45.8 % → 1477 RPM and 23.5 % → 2150 RPM pairs are live cross-checks for the register
   decode, available without a side-by-side HWiNFO run.
 
+### Step 2 outcome: a real, read-only backend
+
+`of-hal-pawnio::SuperIoBackend` implements `SensorSource`, `OutputChannel`, `Backend` and
+`Discovery`, and `src-tauri` selects it when the hardware is there. Verified on `Quasar`
+through the `Backend` trait — the same path the engine uses, not a side channel:
+
+```
+backend: Nuvoton NCT6798D
+9 sensors, 7 channels, can_restore_firmware_control: false
+batched read: 0.4-0.6 ms   cputin=44.0  systin=47.0  fan/1=1478  fan/4=2156
+```
+
+**A whole batched read costs about 0.5 ms**, roughly 0.5 % of a 100 ms tick at the default
+10 Hz. Chip access is not going to be what makes the control loop miss a deadline, and
+there is ample headroom for more sensors, a slower chip, or a faster tick.
+
+Control is deliberately refused. `acquire` and `set_duty` return an explanation rather
+than `Unsupported`; `can_restore_firmware_control()` returns `false`. That is the required
+order, not an oversight — a PWM register must not be written before its firmware
+configuration is captured and proven restorable, and proving restoration means watching a
+real fan with someone present.
+
+Known gaps, recorded so they are not rediscovered:
+
+- **`SensorKind` has no `Duty`.** So the PWM duty readback, which decodes correctly and is
+  printed by the `nct-dump` example, cannot be exposed as a sensor. Mapping it to `Load`
+  would be exactly the quantity confusion the type system exists to prevent — `Load` and
+  `Duty` are both percentages and deliberately do not interchange. Adding
+  `SensorKind::Duty` means touching `of-hal`, `quantity_of` in `of-engine`, the mapping in
+  `src-tauri/src/commands.rs`, and regenerating bindings.
+- **All seven PWM channels are enumerated**, though this board wires only three. Which
+  channels a *board* brings out to a header cannot be discovered from the *chip*: an
+  unwired channel accepts a duty perfectly happily and cools nothing. Tachometer pairing
+  is what lets a user tell them apart. Naming belongs to configuration.
+- **`min_reliable_duty` is `None` everywhere**, because the stall point has not been
+  measured. A guessed floor is a fan that stalls at a duty we called safe.
+- **The six configurable temperature sources and all voltages are still unexposed**, for
+  the reasons under the decode section.
+
+### Developer tooling added
+
+Four read-only examples, all of which need elevation:
+
+| Example | Purpose |
+| --- | --- |
+| `probe` | Is PawnIO there, what version, where are modules searched, does `LpcIO` load |
+| `superio-scan` | Identify the Super I/O in both LPC slots |
+| `nct-dump` | Capture the register space to a file, and decode it through the same functions CI tests |
+| `read-sensors` | Drive the real backend through the `Backend` trait, as the engine does |
+
+`nct-dump` is how the fixture in `crates/of-hal-pawnio/tests/fixtures/` was made. Anyone
+adding a second chip should start by capturing one.
+
 ### Hardware facts about the dev box (`Noook`)
 
 Recorded so a future session does not re-derive them: `Win32_Fan` returns three useless
@@ -449,7 +502,7 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
       commands for catalogue / inventory / graph / snapshot; the editor wired to the
       backend document with a node palette, live readouts and validation errors shown
       against the nodes that caused them.
-- [ ] **Phase 3 — Real hardware.** ← *current step, on the target machine.*
+- [~] **Phase 3 — Real hardware.** ← *current step, on the target machine.*
       Briefed in [`phase-3-hardware-bringup.md`](phase-3-hardware-bringup.md).
 - [ ] **Phase 4 — Safety.** Supervisor layers 1–6, dying breath, external watchdog,
       auto-restart, local crash reports.
@@ -547,6 +600,30 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   have been skipped every tick. A sensor reading arriving as the wrong *quantity* now
   faults rather than being used. Persisted graph types emit TypeScript behind a `ts`
   feature. 76 tests.
+- **2026-09-21** — Phase 3 steps 0 and 2, on the reference machine `Quasar` (ASUS ROG
+  STRIX X570-I GAMING, Nuvoton NCT6798D, Ryzen 9 5950X). First time any of this project
+  has run against real silicon. Read-only throughout: no fan, PWM or configuration
+  register was written, and the backend refuses control by design until the restore path
+  is proven with the user present. Outcomes:
+  - The Phase 1 FFI works — but nothing could reach it. `PawnIOLib.dll` is installed
+    somewhere on no search path, so `is_available()` answered **false on a machine where
+    PawnIO was installed and running**. A backend trusting it would have silently used the
+    mock on a machine with real fans. Now resolved via the driver service's `ImagePath`.
+  - **PawnIO requires elevation.** Every call from an unprivileged process fails
+    `E_ACCESSDENIED`. Direct evidence for Open Question 2.
+  - PawnIO ships **no hardware modules**; `LpcIO` is a separate download. Missing module
+    is now a distinct first-run state from missing driver.
+  - **The ISA bus mutex is mandatory**, not advisory, and its scope was a real bug: held
+    for the handle's lifetime it would have hung every other monitoring tool for as long
+    as OpenFan ran. It now covers a transaction, enforced by the type system.
+  - Decode verified against values observed in another application at capture time, and
+    pinned by a register dump committed as a fixture. The hardware corrected a plausible
+    assumption: the seventh tachometer is at `0x4CE`, and the `0x4CC` an even stride
+    predicts returns garbage that would have read as a healthy 65311 RPM fan.
+  - A batched read of every sensor costs **~0.5 ms**, 0.5 % of a 10 Hz tick.
+  - Left undone on purpose: Step 3 (control). It needs the user present, and the headers
+    are currently owned by another controller — so what `acquire()` would capture is that
+    tool's manual mode, not the firmware's. 133 tests.
 - **2026-09-21** — Handed off to the target machine for Phase 3; see
   `phase-3-hardware-bringup.md`. Phase 2's UI wiring intentionally left unfinished so the
   hardware session is not also editing the frontend.

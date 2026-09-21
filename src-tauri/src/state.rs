@@ -41,11 +41,23 @@ fn select_backend() -> Box<dyn Backend> {
 
     #[cfg(windows)]
     {
-        // Phase 3 installs the real PawnIO-backed backend here, on the target machine.
-        // Until then the driver check is reported through `hardware_status` and the app
-        // runs against the simulation.
-        if of_hal_pawnio::is_available() {
-            tracing::info!("PawnIO present; real hardware support lands in Phase 3");
+        use of_hal::Discovery as _;
+
+        match of_hal_pawnio::SuperIoBackend::discover() {
+            Ok(Some(backend)) => {
+                tracing::info!(backend = %backend.name(), "found real hardware");
+                return backend;
+            }
+            // Nothing supported on this machine: no PawnIO, no module, or no chip we
+            // recognise. An ordinary outcome, not a failure.
+            Ok(None) => {
+                tracing::info!("no supported hardware found; using the simulated backend");
+            }
+            // Worth a warning rather than a silent downgrade: this one the user can fix,
+            // and it is otherwise indistinguishable from having no fans at all.
+            Err(e) => {
+                tracing::warn!(error = %e, "hardware present but unusable; using the simulated backend");
+            }
         }
     }
 
