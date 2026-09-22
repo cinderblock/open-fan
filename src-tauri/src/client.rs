@@ -148,3 +148,103 @@ pub fn take_over(force: bool) -> Result<TakeoverResult, String> {
         other => Err(format!("unexpected reply: {other:?}")),
     }
 }
+
+/// What the service knows about updates.
+///
+/// Passed through as opaque JSON rather than re-modelled here. The service owns the
+/// meaning; the window renders it.
+#[tauri::command]
+pub fn update_status() -> Result<serde_json::Value, String> {
+    match ask(Request::UpdateStatus)? {
+        Response::UpdateStatus(status) => Ok(*status),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+/// Ask the feed now.
+#[tauri::command]
+pub fn check_for_update() -> Result<serde_json::Value, String> {
+    match ask(Request::CheckForUpdate)? {
+        Response::UpdateStatus(status) => Ok(*status),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+/// Turn unattended installation on or off.
+#[tauri::command]
+pub fn set_auto_update(enabled: bool) -> Result<serde_json::Value, String> {
+    match ask(Request::SetAutoUpdate { enabled })? {
+        Response::UpdateStatus(status) => Ok(*status),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+/// Install silently, as the service. No prompt.
+///
+/// The service downloads, verifies and runs the installer itself. This window is not
+/// involved beyond asking, and will be closed by the installer along with the service.
+#[tauri::command]
+pub fn apply_update_silently() -> Result<(), String> {
+    ask(Request::ApplyUpdate).map(|_| ())
+}
+
+/// Install with a prompt, as the user.
+///
+/// The service still does the downloading and the signature check — that must not move
+/// into an unelevated process, where a caller could substitute the file. All the window
+/// does is launch what the service verified, which raises the UAC dialogue because the
+/// installer requires administrator.
+#[tauri::command]
+pub fn apply_update_prompted() -> Result<String, String> {
+    let (installer, version) = match ask(Request::PreparePromptedUpdate)? {
+        Response::PreparedUpdate { installer, version } => (installer, version),
+        other => return Err(format!("unexpected reply: {other:?}")),
+    };
+
+    launch_installer(&installer)?;
+    Ok(version)
+}
+
+/// Run an installer such that Windows raises the elevation prompt.
+///
+/// `ShellExecute`, not `CreateProcess`: only the former honours the target's manifest and
+/// elevates. A plain spawn of an application that requires administrator fails outright
+/// with `ERROR_ELEVATION_REQUIRED`, which is a confusing way to discover this.
+#[cfg(windows)]
+fn launch_installer(path: &str) -> Result<(), String> {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows::core::{HSTRING, PCWSTR};
+
+    let file = HSTRING::from(path);
+    let verb = HSTRING::from("open");
+
+    // SAFETY: both strings are NUL-terminated and outlive the call; no output pointers.
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+
+    // ShellExecute reports failure as a value of 32 or less, including the user simply
+    // declining the elevation prompt — which is a decision, not a fault.
+    if result.0 as isize <= 32 {
+        return Err(
+            "the installer could not be started. If you declined the administrator \
+             prompt, the update was not applied."
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn launch_installer(path: &str) -> Result<(), String> {
+    let _ = path;
+    Err("installing an update is only implemented on Windows".to_owned())
+}

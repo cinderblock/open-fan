@@ -168,6 +168,14 @@ mod platform {
             })
             .context("spawning the editor pipe")?;
 
+        // Updates are watched on their own thread: a hanging feed must cost a tick
+        // nothing, and the fans matter more than the version number.
+        let watching = Arc::clone(&host);
+        std::thread::Builder::new()
+            .name("openfan-update".into())
+            .spawn(move || of_service::host::watch_for_updates(watching))
+            .context("spawning the update watcher")?;
+
         status_handle.set_service_status(report(ServiceState::Running, Duration::default()))?;
         tracing::info!("running");
 

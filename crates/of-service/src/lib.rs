@@ -12,8 +12,12 @@
 //!   run as a console process and behave identically.
 //! * [`takeover`] — standing rival fan controllers down. Lives here because this is where
 //!   the hardware is; the editor asks, the service acts.
+//! * [`update`] — keeping OpenFan current. Lives here because applying an update silently
+//!   means running an installer as LocalSystem, and that capability must never be
+//!   reachable from an unelevated process except through the narrow door this opens.
 
 pub mod host;
 pub mod takeover;
+pub mod update;
 
 pub use host::{Host, driver_summary, serve};

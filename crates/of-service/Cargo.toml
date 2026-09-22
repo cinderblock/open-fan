@@ -24,6 +24,13 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 directories = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The updater. Blocking HTTP to match the service, minisign to verify what it downloads
+# before anything is executed, and semver so "newer" is a decision rather than a guess.
+ureq = "3.4.2"
+minisign-verify = "0.2.5"
+semver = "1.0.28"
 
 [target.'cfg(windows)'.dependencies]
 of-hal-pawnio = { workspace = true }

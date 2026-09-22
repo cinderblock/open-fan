@@ -100,3 +100,32 @@ export type ServiceStatus = {
  * anything the backend models — it has to be answerable when there is no backend to ask.
  */
 export const serviceStatus = () => invoke<ServiceStatus>('service_status');
+
+/**
+ * What the service knows about updates.
+ *
+ * Hand-written rather than generated: the service passes this through as opaque JSON
+ * because it owns the meaning, and the window only renders it.
+ */
+export type UpdateStatus = {
+  currentVersion: string;
+  available: string | null;
+  notes: string | null;
+  rejected: string | null;
+  /** The service installs updates itself, with no prompt. */
+  automatic: boolean;
+  /** False when this build has no signing key, in which case nothing can be installed. */
+  verifiable: boolean;
+  error: string | null;
+};
+
+export const updateStatus = () => invoke<UpdateStatus>('update_status');
+export const checkForUpdate = () => invoke<UpdateStatus>('check_for_update');
+export const setAutoUpdate = (enabled: boolean) =>
+  invoke<UpdateStatus>('set_auto_update', { enabled });
+
+/** Install as the service: no prompt. Only offered once the user has opted in. */
+export const applyUpdateSilently = () => invoke<void>('apply_update_silently');
+
+/** Install as the user: one administrator prompt. The service still verifies the file. */
+export const applyUpdatePrompted = () => invoke<string>('apply_update_prompted');

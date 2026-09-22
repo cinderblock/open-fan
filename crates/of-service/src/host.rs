@@ -23,7 +23,15 @@ use crate::takeover;
 /// reports RUNNING finds a working engine rather than a half-built one.
 pub struct Host {
     pub engine: EngineHandle,
+    /// The release the last check found, if it was newer than us and installable.
+    ///
+    /// Held so that "install it" refers to something *we* decided, rather than to
+    /// anything a caller could name.
+    update: std::sync::Mutex<Option<crate::update::Release>>,
 }
+
+/// This build's version, compared against whatever the feed offers.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl Host {
     pub fn start() -> Self {
@@ -33,6 +41,7 @@ impl Host {
         let engine = Engine::new(backend, EngineConfig::default());
         Self {
             engine: EngineHandle::spawn(engine),
+            update: std::sync::Mutex::new(None),
         }
     }
 
@@ -80,8 +89,123 @@ impl Host {
             Request::TakeOver { force } => {
                 Response::Takeover(Box::new(takeover::take_over(&self.engine, force)))
             }
+
+            Request::UpdateStatus => self.update_status(None),
+
+            Request::CheckForUpdate => match crate::update::check(VERSION) {
+                Ok((found, rejected)) => {
+                    *self.update.lock().unwrap_or_else(|e| e.into_inner()) = found;
+                    self.update_status(rejected.map(|r| r.to_string()))
+                }
+                Err(e) => self.update_error(e),
+            },
+
+            // The whole of a caller's influence over what gets installed: "the thing you
+            // already found". No url, file, version, signature or key crosses the pipe.
+            Request::ApplyUpdate => match self.apply_found_update(Install::Silent) {
+                Ok(response) => response,
+                Err(e) => self.update_error(e),
+            },
+
+            Request::PreparePromptedUpdate => match self.apply_found_update(Install::Prompted) {
+                Ok(response) => response,
+                Err(e) => self.update_error(e),
+            },
+
+            Request::SetAutoUpdate { enabled } => {
+                let mut settings = crate::update::load_settings();
+                settings.automatic = enabled;
+                match crate::update::save_settings(&settings) {
+                    Ok(()) => {
+                        tracing::warn!(enabled, "unattended update installation changed");
+                        self.update_status(None)
+                    }
+                    Err(e) => self.update_error(e),
+                }
+            }
         }
     }
+
+    /// Download and verify whatever the last check found, then either run it ourselves or
+    /// hand the path back for the window to run with a prompt.
+    fn apply_found_update(&self, how: Install) -> anyhow::Result<Response> {
+        let release = self
+            .update
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no update has been found; check first"))?;
+
+        let installer = crate::update::download_verified(&release)?;
+
+        match how {
+            Install::Silent => {
+                crate::update::install_silently(&installer)?;
+                Ok(Response::Ok)
+            }
+            Install::Prompted => Ok(Response::PreparedUpdate {
+                installer: installer.display().to_string(),
+                version: release.version,
+            }),
+        }
+    }
+
+    fn update_status(&self, rejected: Option<String>) -> Response {
+        let found = self
+            .update
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let settings = crate::update::load_settings();
+
+        let status = crate::update::UpdateStatus {
+            current_version: VERSION.to_owned(),
+            available: found.as_ref().map(|r| r.version.clone()),
+            notes: found.as_ref().and_then(|r| r.notes.clone()),
+            rejected,
+            automatic: settings.automatic,
+            verifiable: crate::update::verifiable(),
+            error: None,
+        };
+
+        match serde_json::to_value(status) {
+            Ok(value) => Response::UpdateStatus(Box::new(value)),
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        }
+    }
+
+    fn update_error(&self, error: impl std::fmt::Display) -> Response {
+        // Reported as a status rather than a bare error so the interface keeps the rest
+        // of what it knows — the version, the setting — instead of blanking.
+        let settings = crate::update::load_settings();
+        let status = crate::update::UpdateStatus {
+            current_version: VERSION.to_owned(),
+            available: None,
+            notes: None,
+            rejected: None,
+            automatic: settings.automatic,
+            verifiable: crate::update::verifiable(),
+            error: Some(error.to_string()),
+        };
+
+        match serde_json::to_value(status) {
+            Ok(value) => Response::UpdateStatus(Box::new(value)),
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Which of the two update paths to take.
+#[derive(Debug, Clone, Copy)]
+enum Install {
+    /// The service runs the installer. No prompt; requires the user to have opted in.
+    Silent,
+    /// The window runs the installer. One UAC prompt.
+    Prompted,
 }
 
 /// Whether the kernel driver OpenFan needs is present, and what to tell the user.
@@ -204,6 +328,48 @@ fn select_backend() -> Box<dyn Backend> {
     }
 
     Box::new(of_hal_mock::MockBackend::default())
+}
+
+/// Look for updates on a schedule, and install them when the user has opted in.
+///
+/// Runs on its own thread. The control loop must never wait on a network call, and a feed
+/// that hangs must cost a tick nothing — which is why this is a separate thread rather
+/// than work folded into the engine.
+///
+/// **It only installs when `automatic` is on.** With it off this still checks, so the
+/// interface can offer an update, but applying one stays a decision somebody made.
+pub fn watch_for_updates(host: Arc<Host>) {
+    // A first check shortly after start rather than immediately: the machine may still be
+    // finding its network, and the fans matter more than the version number.
+    const SETTLE: std::time::Duration = std::time::Duration::from_secs(120);
+    std::thread::sleep(SETTLE);
+
+    loop {
+        let settings = crate::update::load_settings();
+
+        match crate::update::check(VERSION) {
+            Ok((Some(release), _)) => {
+                tracing::info!(version = %release.version, "an update is available");
+                *host.update.lock().unwrap_or_else(|e| e.into_inner()) = Some(release);
+
+                if settings.automatic {
+                    match host.apply_found_update(Install::Silent) {
+                        Ok(_) => tracing::warn!("silent update started; the service will restart"),
+                        Err(e) => tracing::error!(error = %e, "silent update failed"),
+                    }
+                }
+            }
+            Ok((None, Some(rejection))) => {
+                tracing::debug!(reason = %rejection, "nothing to install");
+            }
+            Ok((None, None)) => {}
+            // A check that fails is ordinary — a laptop on a train, a blocked endpoint.
+            // Log it and try again later rather than making noise about it.
+            Err(e) => tracing::debug!(error = %e, "update check failed"),
+        }
+
+        std::thread::sleep(settings.interval());
+    }
 }
 
 /// Serve the editor until the process ends. Blocks.

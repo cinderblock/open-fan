@@ -41,4 +41,4 @@ directories = { workspace = true }
 of-hal-pawnio = { workspace = true }
 # Only so `--diagnose` can reach the terminal that launched it: release builds are a
 # windows-subsystem binary and have no console of their own.
-windows = { workspace = true, features = ["Win32_System_Console"] }
+windows = { workspace = true, features = ["Win32_System_Console", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

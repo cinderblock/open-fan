@@ -16,6 +16,7 @@ import type {
 } from './api';
 import NodeInspector, { type DeviceHint } from './NodeInspector';
 import TakeoverPanel from './TakeoverPanel';
+import UpdatePanel from './UpdatePanel';
 import { kindTag } from './graph';
 import type { NodeCategory } from './bindings/NodeCategory';
 import type { Quantity } from './bindings/Quantity';
@@ -144,6 +145,8 @@ export default function Sidebar({
       <EngineStatus snapshot={snapshot} hardware={hardware} />
 
       <TakeoverPanel />
+
+      <UpdatePanel />
 
       <div className="sidebar__actions">
         <button

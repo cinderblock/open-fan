@@ -46,6 +46,22 @@ pub enum Request {
     ContentionReport,
     /// Stand rival controllers down and reclaim abandoned channels.
     TakeOver { force: bool },
+
+    /// What the service knows about updates.
+    UpdateStatus,
+    /// Ask the feed now rather than waiting for the next scheduled check.
+    CheckForUpdate,
+    /// Install the update the service found, as the service, without a prompt.
+    ///
+    /// Carries **no** url, file, version, signature or key: the service decides what it
+    /// installs from a compiled-in endpoint and verifies it against a compiled-in key.
+    /// The whole of a caller's influence is "the thing you already found, now".
+    ApplyUpdate,
+    /// Turn unattended installation on or off.
+    SetAutoUpdate { enabled: bool },
+    /// Where the window should send the user to install an update itself, prompting for
+    /// administrator. The service downloads and verifies; the window runs it.
+    PreparePromptedUpdate,
 }
 
 /// Everything the service may answer.
@@ -71,6 +87,13 @@ pub enum Response {
     Takeover(Box<TakeoverResult>),
     /// Acknowledgement for a request with nothing to return.
     Ok,
+    UpdateStatus(Box<serde_json::Value>),
+    /// A verified installer is on disk and the window may run it, which will prompt for
+    /// administrator. The path is produced by the service, never accepted from a client.
+    PreparedUpdate {
+        installer: String,
+        version: String,
+    },
     /// The request was understood and could not be carried out.
     Error {
         message: String,
@@ -80,7 +103,7 @@ pub enum Response {
 /// Bumped when a change would make an older editor misread a newer service, or the
 /// reverse. The editor checks it on connect rather than discovering the mismatch as a
 /// confusing failure three messages later.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The pipe both sides meet on.
 ///
@@ -156,10 +179,16 @@ mod tests {
             "Rescan",
             "ContentionReport",
             "TakeOver",
+            "UpdateStatus",
+            "CheckForUpdate",
+            "ApplyUpdate",
+            "SetAutoUpdate",
+            "PreparePromptedUpdate",
         ];
         // A new variant must be added here deliberately, which is the moment to ask
-        // whether it hands a user process the ability to disarm the cooling.
-        assert_eq!(names.len(), 8);
+        // whether it hands a user process the ability to disarm the cooling — or, since
+        // the update requests arrived, to make a LocalSystem service run something.
+        assert_eq!(names.len(), 13);
         for forbidden in ["Stop", "Shutdown", "Exit", "Release", "Disable"] {
             assert!(
                 !names.contains(&forbidden),
