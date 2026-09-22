@@ -21,6 +21,7 @@ const inventory = (overrides: Partial<HardwareInventory> = {}): HardwareInventor
   ],
   driverPresent: true,
   driverSummary: 'ok',
+  moduleMissing: false,
   ...overrides,
 });
 

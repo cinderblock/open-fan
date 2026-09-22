@@ -129,3 +129,12 @@ export const applyUpdateSilently = () => invoke<void>('apply_update_silently');
 
 /** Install as the user: one administrator prompt. The service still verifies the file. */
 export const applyUpdatePrompted = () => invoke<string>('apply_update_prompted');
+
+/**
+ * Fetch the PawnIO hardware module.
+ *
+ * PawnIO installs a driver and no modules, so a machine can have it working and OpenFan
+ * still see nothing at all. The service downloads it — it is the one with somewhere
+ * machine-wide to put the file, and the one that will use it.
+ */
+export const fetchHardwareModule = () => invoke<string>('fetch_hardware_module');

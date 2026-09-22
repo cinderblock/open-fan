@@ -62,6 +62,11 @@ pub enum Request {
     /// Where the window should send the user to install an update itself, prompting for
     /// administrator. The service downloads and verifies; the window runs it.
     PreparePromptedUpdate,
+
+    /// Fetch the PawnIO hardware module, which PawnIO itself does not install and
+    /// without which OpenFan sees no hardware. User-initiated: nothing reaches the
+    /// network on its own.
+    FetchHardwareModule,
 }
 
 /// Everything the service may answer.
@@ -103,7 +108,7 @@ pub enum Response {
 /// Bumped when a change would make an older editor misread a newer service, or the
 /// reverse. The editor checks it on connect rather than discovering the mismatch as a
 /// confusing failure three messages later.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The pipe both sides meet on.
 ///
@@ -184,11 +189,12 @@ mod tests {
             "ApplyUpdate",
             "SetAutoUpdate",
             "PreparePromptedUpdate",
+            "FetchHardwareModule",
         ];
         // A new variant must be added here deliberately, which is the moment to ask
         // whether it hands a user process the ability to disarm the cooling — or, since
         // the update requests arrived, to make a LocalSystem service run something.
-        assert_eq!(names.len(), 13);
+        assert_eq!(names.len(), 14);
         for forbidden in ["Stop", "Shutdown", "Exit", "Release", "Disable"] {
             assert!(
                 !names.contains(&forbidden),

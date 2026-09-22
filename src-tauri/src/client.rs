@@ -248,3 +248,22 @@ fn launch_installer(path: &str) -> Result<(), String> {
     let _ = path;
     Err("installing an update is only implemented on Windows".to_owned())
 }
+
+/// Fetch the PawnIO hardware module.
+///
+/// PawnIO installs a driver and no modules, so a machine can have it working and OpenFan
+/// still see nothing. The service does the downloading — it is the one with somewhere
+/// machine-wide to put the file, and the one that will use it.
+///
+/// Returns the service's own message, which names where the module went and that the
+/// service must restart to pick it up.
+#[tauri::command]
+pub fn fetch_hardware_module() -> Result<String, String> {
+    // This request answers with an Error-shaped message on success too, because the
+    // outcome is a sentence for a person rather than a value to branch on.
+    match of_rpc::request(&Request::FetchHardwareModule) {
+        Ok(Response::Error { message }) => Ok(message),
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(e) => Err(e.to_string()),
+    }
+}

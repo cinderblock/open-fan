@@ -90,6 +90,23 @@ impl Host {
                 Response::Takeover(Box::new(takeover::take_over(&self.engine, force)))
             }
 
+            // Restarting the engine afterwards is the point: discovery ran at start-up
+            // and found nothing, so the module only takes effect once it runs again.
+            Request::FetchHardwareModule => match crate::modules::fetch_lpcio() {
+                Ok(path) => {
+                    self.engine.rescan();
+                    Response::Error {
+                        message: format!(
+                            "Installed the hardware module to {}. Restart the OpenFan                              service to use it.",
+                            path.display()
+                        ),
+                    }
+                }
+                Err(e) => Response::Error {
+                    message: e.to_string(),
+                },
+            },
+
             Request::UpdateStatus => self.update_status(None),
 
             Request::CheckForUpdate => match crate::update::check(VERSION) {
@@ -231,7 +248,16 @@ pub fn driver_summary() -> (bool, String) {
 
 fn inventory_dto(engine: &EngineHandle) -> HardwareInventory {
     let inv = engine.inventory();
-    let (driver_present, driver_summary) = driver_summary();
+    let (driver_present, mut driver_summary) = driver_summary();
+
+    // A present driver with no hardware module looks exactly like an unsupported board,
+    // and is the state a fresh install lands in. Say which it is.
+    let module_missing = driver_present && !crate::modules::lpcio_present();
+    if module_missing {
+        driver_summary = format!(
+            "{driver_summary} PawnIO is installed but its hardware module is not — PawnIO              ships the driver only. Without it OpenFan cannot see this machine's sensors."
+        );
+    }
 
     HardwareInventory {
         backend: inv.backend,
@@ -256,6 +282,7 @@ fn inventory_dto(engine: &EngineHandle) -> HardwareInventory {
             .collect(),
         driver_present,
         driver_summary,
+        module_missing,
     }
 }
 

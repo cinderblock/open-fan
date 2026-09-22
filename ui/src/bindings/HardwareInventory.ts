@@ -13,4 +13,12 @@ driverPresent: boolean,
 /**
  * A sentence the UI can show verbatim when it is not.
  */
-driverSummary: string, };
+driverSummary: string, 
+/**
+ * The driver is installed but its hardware module is not.
+ *
+ * Its own field rather than something to infer from the summary text, because
+ * this is the state a fresh install lands in and it is *fixable in one click* —
+ * the interface needs to know it specifically, not guess at it from prose.
+ */
+moduleMissing: boolean, };

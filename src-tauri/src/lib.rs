@@ -255,6 +255,7 @@ pub fn run() {
             client::set_auto_update,
             client::apply_update_silently,
             client::apply_update_prompted,
+            client::fetch_hardware_module,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start OpenFan");

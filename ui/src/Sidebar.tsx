@@ -15,6 +15,7 @@ import type {
   ValidationError,
 } from './api';
 import NodeInspector, { type DeviceHint } from './NodeInspector';
+import MissingModule from './MissingModule';
 import TakeoverPanel from './TakeoverPanel';
 import UpdatePanel from './UpdatePanel';
 import { kindTag } from './graph';
@@ -140,6 +141,7 @@ export default function Sidebar({
         {hardware && !hardware.driverPresent && (
           <p className="sidebar__driver">{hardware.driverSummary}</p>
         )}
+        {hardware?.moduleMissing && <MissingModule />}
       </header>
 
       <EngineStatus snapshot={snapshot} hardware={hardware} />
