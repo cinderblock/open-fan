@@ -12,9 +12,9 @@
 //!
 //! [`acquire`](OutputChannel::acquire) reads and records both register bytes — the fan
 //! mode (including the firmware's tolerance nibble) and the duty — *before* it writes
-//! anything. [`release`](OutputChannel::release) writes those exact bytes back. A
-//! round-trip test proves no mode value loses information, including undocumented ones,
-//! which are preserved verbatim rather than normalised.
+//! anything, so nothing is lost before there is a copy of it. A round-trip test proves no
+//! mode value loses information, including undocumented ones, which are preserved
+//! verbatim rather than normalised.
 //!
 //! Two orderings inside that are load-bearing and easy to get backwards:
 //!
@@ -40,15 +40,20 @@
 //! written; the chip resuming control and moving the duty itself is what proves control
 //! was handed *back*.
 //!
-//! # Why `can_restore_firmware_control` still answers `false`
+//! # Releasing is one-way: it always ends at the board's fan curve
 //!
-//! Not because the mechanism is unproven — it is proven, above. Because the question is
-//! per-channel and this signature is per-backend. Restoring a channel we took *from the
-//! firmware* hands control back. Restoring one that was already in manual when we found
-//! it — because another application put it there — reinstates a fixed duty with no
-//! thermal response, which is faithful but is not firmware control and is not a good
-//! failsafe. Answering `true` for the whole backend would be a lie about the second case.
-//! See the method's own note.
+//! Taking control over from another application is a **one-way** switch. `release` is
+//! therefore defined by where it ends, not by what it found: the board's own fan curve is
+//! always in charge afterwards.
+//!
+//! Where we took a channel *from* the firmware, the exact mode byte goes back, tolerance
+//! nibble and all. Where we found it in some other program's manual mode, the firmware
+//! mode is imposed instead — faithfully restoring that would hand back a frozen duty with
+//! nothing responding to temperature, which is the state this project exists to prevent.
+//!
+//! Which mode is "the board's" is learned by watching a channel the firmware still owns,
+//! not assumed, and cached — `release` runs on the dying-breath path and cannot go
+//! enumerating channels to work it out.
 
 use std::collections::BTreeMap;
 
@@ -62,7 +67,7 @@ use crate::lpc::{LpcError, LpcIo, Slot, Unlock};
 use crate::nct6775::{
     FanMode, Model, Nct6775, REG_FAN, REG_FAN_MODE, REG_PWM_WRITE, TEMP_INPUTS, decode_pwm,
     decode_rpm, decode_temp_byte, decode_temp_word, encode_pwm, mode_from_register,
-    mode_into_register,
+    mode_into_register, release_mode,
 };
 
 /// Everything `release` needs to undo an `acquire`, captured before anything was written.
@@ -120,6 +125,14 @@ pub struct SuperIoBackend {
     /// Control is opt-in. A backend that can read is useful on its own, and writing a PWM
     /// register is not something that should become possible by accident.
     control_enabled: bool,
+    /// The firmware mode this board uses, learned by watching a channel the firmware
+    /// still owns rather than assumed.
+    ///
+    /// Cached because `release` needs it and `release` runs on the dying-breath path,
+    /// where working it out — which means enumerating channels into a `Vec` — is not
+    /// allowed. Learned during probing and refreshed whenever a firmware-controlled
+    /// channel is seen.
+    firmware_mode: FanMode,
 }
 
 impl SuperIoBackend {
@@ -148,6 +161,10 @@ impl SuperIoBackend {
             model,
             acquired: [None; 7],
             control_enabled: false,
+            // Smart Fan IV is the usual Nuvoton default on desktop boards, and stands in
+            // only until a channel the firmware still owns tells us what this board
+            // actually uses.
+            firmware_mode: FanMode::SmartFanIv,
         }))
     }
 
@@ -444,9 +461,17 @@ impl OutputChannel for SuperIoBackend {
             .read_byte(&bus, REG_PWM_WRITE[index])
             .map_err(hal_error)?;
 
+        // If we are taking this channel *from* the firmware, that mode is this board's
+        // own answer to "what does the BIOS configure a header as" — better evidence
+        // than any default, and what `release` will hand back to.
+        let found = mode_from_register(mode_register);
+        if found.is_firmware_controlled() {
+            self.firmware_mode = found;
+        }
+
         tracing::info!(
             channel = %channel,
-            mode = ?mode_from_register(mode_register),
+            mode = ?found,
             mode_register = format!("{mode_register:#04X}"),
             duty,
             "acquiring channel; firmware state recorded"
@@ -509,16 +534,27 @@ impl OutputChannel for SuperIoBackend {
             return Ok(());
         };
 
+        // Releasing always ends with the board's own fan curve in charge — never with a
+        // manual duty that nothing will ever update.
+        //
+        // Taking control over from another application is a **one-way** switch. If we
+        // found this channel in manual, some other program put it there, and faithfully
+        // restoring that would hand back a frozen duty with nothing responding to
+        // temperature — the precise state this project exists to prevent. Where we took
+        // the channel *from* the firmware we put back the exact byte, tolerance nibble
+        // and all; otherwise we impose the firmware mode this board uses.
+        let restore_to = release_mode(state.mode_register, self.firmware_mode);
+
         let bus = self.lpc.lock().map_err(hal_error)?;
         self.chip
             .write_byte(&bus, REG_PWM_WRITE[index], state.duty)
             .map_err(hal_error)?;
         self.chip
-            .write_byte(&bus, REG_FAN_MODE[index], state.mode_register)
+            .write_byte(&bus, REG_FAN_MODE[index], restore_to)
             .map_err(hal_error)?;
 
         // Cleared last: while any part of the restore can still fail, we must keep the
-        // recording, because it is the only copy of the firmware's configuration.
+        // recording, because it is the only copy of what we found.
         self.acquired[index] = None;
         Ok(())
     }
@@ -566,22 +602,21 @@ impl OutputChannel for SuperIoBackend {
     }
 
     fn can_restore_firmware_control(&self) -> bool {
-        // The mechanism is proven on hardware — see the module docs. This `false` is not
-        // about capability.
+        // Yes — and unconditionally, because `release` is defined to end with the board's
+        // own fan curve in charge whatever it found.
         //
-        // It is about the question being per-channel while this signature is
-        // per-backend. `acquire` already records which it was: a channel taken from a
-        // firmware mode can genuinely be handed back, and one found in manual cannot,
-        // because restoring it reinstates a fixed duty with no thermal response. Both
-        // exist simultaneously on the reference machine.
+        // This used to answer `false`, on the grounds that the question was per-channel:
+        // a channel taken from the firmware could be handed back, while one found in
+        // another application's manual mode could not. That framing was wrong. Taking
+        // control over is a **one-way** switch — we are never obliged to reinstate
+        // another program's settings, and doing so would hand back a frozen duty with
+        // nothing responding to temperature. Releasing to firmware is both simpler and
+        // strictly safer, so there is no per-channel distinction left to express.
         //
-        // Answering `true` would be a lie about the second kind, so we answer for the
-        // weakest channel. The cost is that the engine failsafes to a fixed duty even
-        // where releasing would have been better — never wrong, sometimes louder than
-        // necessary. Fixing it properly means `can_restore_firmware_control(&self,
-        // channel: &ChannelId)`, which is an `of-hal` change affecting the mock and the
-        // engine's policy tests.
-        false
+        // The engine's default failsafe is `RestoreFirmware`, which it downgrades to a
+        // fixed 100 % when a backend says it cannot. Answering honestly here is what lets
+        // the quiet, correct outcome happen instead of the loud fallback.
+        true
     }
 }
 

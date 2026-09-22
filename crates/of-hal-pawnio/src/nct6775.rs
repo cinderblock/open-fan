@@ -113,6 +113,27 @@ pub fn mode_into_register(raw: u8, mode: FanMode) -> u8 {
     (raw & 0x0F) | (bits << 4)
 }
 
+/// The mode byte a release should write, given what was recorded and this board's
+/// firmware mode.
+///
+/// Releasing is **one-way**: it always ends with a firmware algorithm in charge. Taking a
+/// channel over from another application does not oblige us to reinstate that
+/// application's settings, and doing so would hand back a manual duty that nothing will
+/// ever update — a fan frozen at one speed while the machine heats up.
+///
+/// So: a channel taken *from* the firmware goes back byte for byte, tolerance nibble
+/// included. A channel found in manual gets the firmware mode imposed on it.
+///
+/// Pure, because `release` runs on the dying-breath path and this is the one decision it
+/// makes — a decision that has no business being untestable.
+pub fn release_mode(recorded: u8, firmware_mode: FanMode) -> u8 {
+    if mode_from_register(recorded).is_firmware_controlled() {
+        recorded
+    } else {
+        mode_into_register(recorded, firmware_mode)
+    }
+}
+
 /// Convert a duty percentage to a register value.
 ///
 /// Saturating rather than wrapping: a caller that somehow asks for 300 % gets full speed,
@@ -489,6 +510,51 @@ mod tests {
     fn duty_encoding_round_trips_through_the_decoder() {
         for raw in 0..=u8::MAX {
             assert_eq!(encode_pwm(decode_pwm(raw)), raw, "lost {raw}");
+        }
+    }
+
+    #[test]
+    fn releasing_a_channel_we_took_from_firmware_restores_it_exactly() {
+        // 0x4A: Smart Fan IV with a tolerance nibble of A. Both halves must survive, or
+        // the board behaves differently after we hand it back than it did before.
+        assert_eq!(release_mode(0x4A, FanMode::SmartFanIv), 0x4A);
+        assert_eq!(release_mode(0x10, FanMode::SmartFanIv), 0x10);
+    }
+
+    #[test]
+    fn releasing_a_channel_we_took_from_another_app_still_ends_at_firmware() {
+        // Found in manual, so another program put it there. Faithfully restoring manual
+        // would hand back a frozen duty with nothing responding to temperature — the one
+        // outcome this whole project exists to prevent. Switching control over is one-way.
+        let restored = release_mode(0x00, FanMode::SmartFanIv);
+        assert_eq!(mode_from_register(restored), FanMode::SmartFanIv);
+        assert!(mode_from_register(restored).is_firmware_controlled());
+    }
+
+    #[test]
+    fn imposing_firmware_still_keeps_the_boards_tolerance_nibble() {
+        // The low nibble is the firmware's, not the other application's, so it survives
+        // even when the mode above it does not.
+        assert_eq!(release_mode(0x07, FanMode::SmartFanIv) & 0x0F, 0x07);
+    }
+
+    #[test]
+    fn a_release_never_ends_in_manual_whatever_it_found() {
+        // The property, over every byte the register can hold and every firmware mode
+        // this board might use. There is no input for which we hand back manual control.
+        for firmware in [
+            FanMode::SmartFanIv,
+            FanMode::SmartFanIii,
+            FanMode::ThermalCruise,
+            FanMode::SpeedCruise,
+        ] {
+            for recorded in 0..=u8::MAX {
+                let restored = mode_from_register(release_mode(recorded, firmware));
+                assert!(
+                    restored.is_firmware_controlled(),
+                    "release_mode({recorded:#04X}, {firmware:?}) gave {restored:?}"
+                );
+            }
         }
     }
 

@@ -183,6 +183,14 @@ export default function TakeoverPanel() {
               } to the motherboard's own fan curve`}
             . Your fans may get louder or quieter than whatever you had configured elsewhere.
           </p>
+          {/* Stated up front because it is the part people assume works the other way:
+              switching control over is one-way. We do not put another program's settings
+              back, ever — doing so would hand back a duty frozen at one value with
+              nothing responding to temperature. */}
+          <p className="takeover__consequence">
+            This is one-way. Closing OpenFan later returns your fans to the motherboard's
+            fan curve, not to {mustStop.length > 0 ? mustStop.map((a) => a.name).join(' or ') : 'the previous program'}.
+          </p>
 
           <label className="takeover__force">
             <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
