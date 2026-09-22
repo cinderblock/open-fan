@@ -4,8 +4,10 @@
 //! the first writes on a new chip happen in a small, scripted, interruptible program
 //! rather than inside the control loop.
 //!
-//! It does **not** write a duty. Proving restore comes first; changing a speed is a
-//! separate, later step.
+//! With no second argument it **writes no duty at all** — it only proves that taking a
+//! channel and handing it back works. Pass a duty percentage to also command a speed
+//! while the channel is held; it must be *higher* than the current one, because a fan
+//! stalls at the bottom of its range and a stalled fan reads as quiet while not cooling.
 //!
 //! # What "restored" means, and what it does not
 //!
@@ -29,7 +31,8 @@
 //!
 //! ```sh
 //! # Run from an elevated terminal. Default channel is 0.
-//! .\target\debug\examples\control-test.exe 0
+//! .\target\debug\examples\control-test.exe 0        # acquire/release only
+//! .\target\debug\examples\control-test.exe 0 90     # also command 90 %
 //! ```
 
 use std::io::Write;
@@ -37,7 +40,7 @@ use std::time::{Duration, Instant};
 
 use of_hal::{Backend, OutputChannel, SensorSource};
 use of_hal_pawnio::SuperIoBackend;
-use of_hal_pawnio::nct6775::{FanMode, decode_pwm, mode_from_register};
+use of_hal_pawnio::nct6775::{FanMode, decode_pwm, encode_pwm, mode_from_register};
 
 /// How long to watch for the firmware moving the duty after we hand the channel back.
 const OBSERVE_FOR: Duration = Duration::from_secs(8);
@@ -55,6 +58,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .unwrap_or_else(|| "0".into())
         .parse()?;
+
+    // Optional second argument: a duty to command while we hold the channel. Absent, the
+    // run is acquire/release only and commands nothing.
+    let target: Option<f64> = match std::env::args().nth(2) {
+        Some(arg) => Some(arg.parse()?),
+        None => None,
+    };
 
     // The concrete type, not a Box<dyn Backend>: this needs `enable_control` and the raw
     // register accessors, and one handle is enough.
@@ -124,7 +134,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // From here on the channel is ours, so every path out must release it. Releasing
     // unconditionally means an error — or a declined confirmation — cannot leave the
     // channel stranded in manual mode with nobody driving it.
-    let held = held_steps(&mut chip, index, recorded_duty);
+    let held = held_steps(&mut chip, index, &channel, recorded_duty, target);
     let released = chip.release(&channel.id);
 
     held?;
@@ -190,7 +200,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn held_steps(
     chip: &mut SuperIoBackend,
     index: usize,
+    channel: &of_hal::ChannelInfo,
     recorded_duty: u8,
+    target: Option<f64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mode_held, duty_held) = chip.channel_registers(index)?;
     println!(
@@ -208,7 +220,83 @@ fn held_steps(
         println!("!! duty changed on acquire ({recorded_duty} -> {duty_held}); it should not have");
     }
 
+    if let Some(target) = target {
+        drive_duty(chip, index, channel, duty_held, target)?;
+    }
+
     confirm("Release the channel and restore firmware control?")
+}
+
+/// Command a duty and check the chip actually took it.
+///
+/// Only ever upward on a first outing. A fan stalls at the bottom of its range, and a
+/// stalled fan reads as "quiet" while being "not cooling" — so finding the floor is a
+/// deliberate, separate experiment, not something to stumble into while proving that
+/// writes land at all.
+fn drive_duty(
+    chip: &mut SuperIoBackend,
+    index: usize,
+    channel: &of_hal::ChannelInfo,
+    from: u8,
+    target: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current = decode_pwm(from);
+    if target < current {
+        return Err(format!(
+            "asked for {target:.1} %, which is below the current {current:.1} %. \
+             Lowering a duty risks stalling the fan, and a stalled fan reads as quiet \
+             while it is in fact not cooling. Use a higher value; finding the floor is \
+             the separate stall-point experiment."
+        )
+        .into());
+    }
+
+    let expected = encode_pwm(target);
+    println!(
+        "\nThis will command {target:.1} % (raw {expected}) on {}, up from {current:.1} %.",
+        channel.id
+    );
+    confirm("Write this duty?")?;
+
+    chip.set_duty(&channel.id, target)?;
+
+    let (_, after) = chip.channel_registers(index)?;
+    println!(
+        "commanded: {expected}   read back: {after} ({:.1} %)",
+        decode_pwm(after)
+    );
+    if after != expected {
+        return Err(format!(
+            "the duty register reads {after}, not the {expected} we wrote — the write \
+             did not land where we think it did"
+        )
+        .into());
+    }
+
+    // Holding steady is the point: in manual mode the firmware must not be overriding us.
+    // A value that drifts back would mean we are not actually in control.
+    println!("holding 3s to confirm the firmware is not overriding us...");
+    std::thread::sleep(Duration::from_secs(3));
+    let (_, still) = chip.channel_registers(index)?;
+    if still == expected {
+        println!("  held at {still}. We are driving this channel.");
+    } else {
+        return Err(format!(
+            "duty moved {expected} -> {still} while we were supposed to be in control; \
+             something else is writing this channel"
+        )
+        .into());
+    }
+
+    if let Some(tach) = &channel.tachometer {
+        let readings = chip.read_all()?;
+        match readings.get(tach) {
+            Some(rpm) => println!("  {tach}: {rpm:.0} RPM"),
+            None => println!("  {tach} did not read"),
+        }
+    }
+
+    Ok(())
 }
 
 /// Watch for the firmware moving the duty, which is the real proof it has the channel.
