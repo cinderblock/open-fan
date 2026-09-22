@@ -699,6 +699,67 @@ exactly the failure the typed-port thesis exists to prevent.
 replacement is a faster *type checker* (the native TypeScript port), not removing the
 check.
 
+### Taking over from another fan controller — measured, on `Quasar`
+
+Established 2026-09-22 by doing it, not by reasoning about it. Implemented in
+`of-contention` (process side) and `SuperIoBackend::ownership` /
+`restore_firmware_mode` (chip side), rehearsed by the `takeover` example.
+
+**A reboot is not required, and the earlier claim that one was is withdrawn.** It was
+asserted from reasoning and was wrong. A firmware mode's configuration — curve points,
+temperature source, thresholds — lives in registers the mode *selector* does not touch, so
+it survives a trip through manual mode no matter who made the trip. Writing the mode
+register back restarts the board's own curve with the board's own settings. Channel 0 had
+already shown this four times; the takeover run then did it on six channels at once, and
+all six were curving within seconds. **The chip does not record who wrote its mode
+register, so a channel another application left in manual is not a special case.**
+
+**Graceful shutdown of a third-party tray application is not reliable.** FanControl
+survived both `WM_CLOSE` to all of its windows and `WM_QUIT` to all of its GUI threads,
+12 s apiece. It is tray-minimised with `MainWindowHandle = 0`, eleven hidden top-level
+windows and obfuscated single-character class names — there is nothing to politely close
+and no contract that it would honour one. `of_contention::stop` therefore escalates and
+*reports which rung it reached*, because an application that exits cleanly may hand its
+channels back and one that is terminated certainly did not.
+
+**FanControl does not re-assert the mode register while running.** It writes `Manual` once
+when it takes a channel and writes only duties thereafter. So writing a firmware mode
+takes the channel away from it *without stopping it*, and it does not fight back — the
+chip's own algorithm simply overrides its duty writes. Two consequences:
+
+- Restoring firmware control never needs the other application stopped.
+- **Driving a channel ourselves still does.** Our control needs `Manual` plus our own duty
+  writes, and its duty writes go to the same register — that is a genuine fight, and the
+  chip has no arbitration to decide it. Stopping it remains a precondition for *control*,
+  just not for *handing back to firmware*.
+
+**A lead worth following: `FanControl.IPC.dll` ships in its install directory**, which
+suggests a documented external-control surface. If it has one, asking it to stand down is
+enormously better than killing it. Research this from public documentation only — **do not
+decompile it**; the clean-room rules apply to it exactly as to any other closed product.
+
+**The "is something actively driving this channel" heuristic is one-sided.** A duty that
+moves while we write nothing proves another controller is live. A duty that holds still
+proves *nothing*: a controller at a stable temperature writes the same byte every tick.
+The first version of the takeover report asserted the strong form and confidently labelled
+a CPU fan that FanControl was demonstrably driving as "abandoned, nothing is driving it".
+The only conclusive test for the still case is to write a different value and see whether
+it is stomped, which means writing to a channel we do not own — not something to do
+silently behind a diagnostic.
+
+**Incident, recorded because the lesson is process rather than code.** The takeover flow
+has a guard refusing to restore firmware control while a controller is still running,
+precisely to avoid starting a tug-of-war. It was written, silently failed to apply, and
+was committed and run missing — the run then did exactly what it forbids. No test would
+have caught it; verifying that the edit landed would have. Two follow-ups:
+
+- **Move the takeover sequence into a library crate.** `cargo test` does not run
+  assertions inside examples, so as it stands this flow has no coverage at all. That must
+  happen before it is wired to a button.
+- The side effect was benign but real: six channels went to the BIOS curve, including an
+  AIO pump deliberately held at 23 % which jumped to 100 %. A takeover that changes a
+  user's fan behaviour must say so *before* acting, not after.
+
 ### Hardware facts about the dev box (`Noook`)
 
 Recorded so a future session does not re-derive them: `Win32_Fan` returns three useless
@@ -735,6 +796,12 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
 
 ## Backlog (captured from the initial brief, not yet scheduled)
 
+- **Move the takeover sequence into a library crate and test it.** It currently lives in
+  the `takeover` example, where `cargo test` never runs its assertions — so the guard that
+  refuses to restore firmware control under a live controller has no coverage, and was
+  once shipped missing. Must happen before it is wired to a button.
+- **Ask FanControl to stand down rather than killing it.** `FanControl.IPC.dll` suggests an
+  external-control surface; research from public documentation only, never by decompiling.
 - **Contention with other fan control software (high priority, user-requested).** Detect
   that another application is driving the same headers, surface it plainly in the UI, and
   offer to shut it down *reliably*. Register-level coexistence via the ISA bus mutex is
