@@ -189,7 +189,7 @@ export default function TakeoverPanel() {
               nothing responding to temperature. */}
           <p className="takeover__consequence">
             This is one-way. Closing OpenFan later returns your fans to the motherboard's
-            fan curve, not to {mustStop.length > 0 ? mustStop.map((a) => a.name).join(' or ') : 'the previous program'}.
+            fan curve, not to whichever program was controlling them before.
           </p>
 
           <label className="takeover__force">

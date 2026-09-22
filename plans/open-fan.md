@@ -818,6 +818,53 @@ runs elevated at boot and makes both problems disappear.
 uninstalls. A PawnIO *version* change is a separate matter and first-run already
 distinguishes "installed" from "installed at a version we have tested".
 
+### When to elevate: the options, and what the neighbours do
+
+Requiring administrator is **normal for this class of application** — nothing that reads a
+Super I/O can avoid it. What varies is *when* the prompt happens, and that is a real
+design choice rather than a detail.
+
+| | Mechanism | Prompt | Autostart | Cost |
+| --- | --- | --- | --- | --- |
+| **A** | Manifest `requireAdministrator` *(current)* | every manual launch | **broken** | none |
+| **B** | `asInvoker`, relaunch elevated on demand | when the user opts in | **broken** | app must work in two modes |
+| **C** | Scheduled task, *run with highest privileges* | **none at logon** | works | installer must create the task |
+| **D** | Windows service + unelevated UI | **none after install** | works, and at boot | IPC, service host, installer |
+
+**A is where we are.** Honest and simple: PawnIO refuses a handle to an unprivileged
+process, so an unelevated OpenFan cannot read one temperature. Without the manifest it
+would fall back to the simulated backend and show a plausible, fictional machine.
+
+**B** is worth naming only to reject it. Starting unelevated and offering to restart
+elevated means the app has to be coherent in a state where it can see no hardware at all —
+every panel, every sensor list, every graph. That is a lot of surface for a state nobody
+wants to be in, and it still cannot autostart.
+
+**C is the cheap next step and the one that unblocks autostart.** A task registered with
+*run with highest privileges* launches elevated at logon with **no prompt**; the installer
+is already elevated, so it can create it. Confirmed necessary:
+`tauri-plugin-autostart` uses `auto-launch`, which writes only to
+`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` and has no Task Scheduler path — and
+Windows will not launch an elevated application from that key. If the Start-menu shortcut
+also triggers the task rather than the exe, the manual launch stops prompting too.
+
+**D is the destination**, and it is Open Question 2 already. A service dissolves three
+problems at once — elevation, autostart, and controlling fans *before any login* — and it
+survives logoff. The engine is already a library crate precisely so it can be hosted
+either way.
+
+**What the neighbours do:** the tool-shaped ones (FanControl, LibreHardwareMonitor,
+HWiNFO) require administrator and offer a scheduled task for startup — pattern A plus C.
+The more commercial ones (MSI Afterburner, Argus Monitor) install a service — pattern D.
+Both are normal; D is the more polished.
+
+**One consequence of A worth being explicit about.** Between boot and the moment a user
+logs in and accepts the prompt, OpenFan is not running and the fans are managed by the
+board firmware. That is *fine* — and it is fine specifically because releasing hands
+channels back to the firmware curve rather than to a frozen duty. The elevation model and
+the one-way release decision hold each other up; changing either without the other leaves
+a gap at boot.
+
 ### Hardware facts about the dev box (`Noook`)
 
 Recorded so a future session does not re-derive them: `Win32_Fan` returns three useless
