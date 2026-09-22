@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use of_core::{CompiledGraph, EvalState, Graph, GraphError, PortRef, SensorReadings};
-use of_hal::{Backend, ChannelId, ChannelInfo, SensorId, SensorInfo, SensorKind};
+use of_hal::{Backend, ChannelControl, ChannelId, ChannelInfo, SensorId, SensorInfo, SensorKind};
 use of_units::{Quantity, Value};
 
 use crate::policy::{Applied, SafetyPolicy, apply_tick, dying_breath};
@@ -310,6 +310,56 @@ impl Engine {
     }
 
     /// Channels currently under our control.
+    /// Who is driving each of the backend's channels right now.
+    ///
+    /// Used by the takeover flow to tell a channel the firmware is handling from one
+    /// another application abandoned in manual mode. A backend that cannot tell reports
+    /// [`ChannelControl::Unknown`], which means *no information* — never "nobody else".
+    pub fn channel_controls(&self) -> Vec<(ChannelId, ChannelControl)> {
+        self.backend
+            .channels()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|info| {
+                let control = self
+                    .backend
+                    .control_of(&info.id)
+                    .unwrap_or(ChannelControl::Unknown);
+                (info.id, control)
+            })
+            .collect()
+    }
+
+    /// Hand channels to the device's own control algorithm.
+    ///
+    /// Recovery for channels some other application left in manual and abandoned, where
+    /// nothing is responding to temperature. Refuses any channel **we** hold, because
+    /// that is not abandoned — releasing one of ours is [`Engine::shutdown`]'s job and
+    /// goes through the recorded state, not a mode we picked.
+    ///
+    /// Reports per channel rather than failing the batch: one header that will not take
+    /// the write must not prevent the rest from being rescued.
+    pub fn hand_back_to_firmware(
+        &mut self,
+        channels: &[ChannelId],
+    ) -> Vec<(ChannelId, Result<(), String>)> {
+        channels
+            .iter()
+            .map(|id| {
+                let outcome = if self.acquired.contains(id) {
+                    Err(format!(
+                        "{id} is held by this engine; release it rather than overwriting                          its mode"
+                    ))
+                } else {
+                    self.backend
+                        .hand_back_to_firmware(id)
+                        .map_err(|e| e.to_string())
+                };
+                (id.clone(), outcome)
+            })
+            .collect()
+    }
+
     pub fn acquired_channels(&self) -> &BTreeSet<ChannelId> {
         &self.acquired
     }

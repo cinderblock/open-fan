@@ -437,3 +437,74 @@ mod tests {
         assert_eq!(good.port, "out");
     }
 }
+
+/// Who is driving an output channel, for the takeover panel.
+///
+/// Mirrors [`of_hal::ChannelControl`]. `Unknown` means the backend could not tell, which
+/// the interface must never render as "fine".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+#[serde(rename_all = "kebab-case")]
+pub enum ChannelControlDto {
+    /// The device's own curve is handling it. Nothing external needs to.
+    Firmware,
+    /// OpenFan holds it.
+    Ours,
+    /// Manual, but not ours — another application, or one that abandoned it there.
+    Foreign,
+    /// The backend cannot tell.
+    Unknown,
+}
+
+dto! {
+    /// Another application that is running and what it means for us.
+    pub struct ContendingAppDto {
+        /// Stable key, e.g. `fancontrol`.
+        pub key: String,
+        pub name: String,
+        pub process_name: String,
+        pub pid: u32,
+        /// `controller`, `monitor` or `vendor`.
+        pub role: String,
+        /// Plain-language explanation shown next to it.
+        pub note: String,
+        /// Whether it has to stand down before we can drive a fan.
+        pub must_stop: bool,
+    }
+}
+
+dto! {
+    pub struct ChannelControlEntry {
+        pub id: String,
+        pub label: String,
+        pub control: ChannelControlDto,
+    }
+}
+
+dto! {
+    /// Everything the takeover panel needs to explain the situation.
+    pub struct ContentionReport {
+        pub channels: Vec<ChannelControlEntry>,
+        pub apps: Vec<ContendingAppDto>,
+        /// Channels under foreign manual control — nothing is responding to temperature
+        /// on these.
+        pub stranded: Vec<String>,
+        /// True when nothing needs doing.
+        pub clear: bool,
+        /// Why a takeover cannot proceed right now, if it cannot.
+        pub blocker: Option<String>,
+    }
+}
+
+dto! {
+    /// What a takeover attempt did.
+    pub struct TakeoverResult {
+        /// One line per thing attempted, in order, for the user to read.
+        pub steps: Vec<String>,
+        pub succeeded: bool,
+        /// Present when the attempt stopped early.
+        pub blocker: Option<String>,
+        /// The situation afterwards.
+        pub report: ContentionReport,
+    }
+}

@@ -537,6 +537,36 @@ impl OutputChannel for SuperIoBackend {
         Ok(())
     }
 
+    fn control_of(&self, channel: &ChannelId) -> of_hal::Result<of_hal::ChannelControl> {
+        let index = self.index_of(channel)?;
+        let (mode_register, _) = self.channel_registers(index)?;
+
+        Ok(if self.acquired[index].is_some() {
+            of_hal::ChannelControl::Ours
+        } else if mode_from_register(mode_register).is_firmware_controlled() {
+            of_hal::ChannelControl::Firmware
+        } else {
+            of_hal::ChannelControl::Foreign
+        })
+    }
+
+    /// Hand a channel to the chip's own algorithm.
+    ///
+    /// The mode is taken from a channel the firmware still owns rather than assumed,
+    /// because that is this board's own answer to "what does the BIOS configure a header
+    /// as". Only if no such channel exists does it fall back to Smart Fan IV, which is
+    /// the usual Nuvoton default on desktop boards.
+    fn hand_back_to_firmware(&mut self, channel: &ChannelId) -> of_hal::Result<()> {
+        let template = self
+            .ownership()?
+            .into_iter()
+            .find(|c| c.firmware_controlled())
+            .map(|c| c.mode)
+            .unwrap_or(FanMode::SmartFanIv);
+
+        self.restore_firmware_mode(channel, template)
+    }
+
     fn can_restore_firmware_control(&self) -> bool {
         // The mechanism is proven on hardware — see the module docs. This `false` is not
         // about capability.

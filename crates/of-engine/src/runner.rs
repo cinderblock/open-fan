@@ -23,6 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use of_core::{Graph, GraphError};
+use of_hal::{ChannelControl, ChannelId};
 use parking_lot::Mutex;
 
 use crate::engine::{Engine, EngineConfig, Inventory, TickReport};
@@ -46,6 +47,11 @@ enum Command {
     SetGraph(Graph, Sender<Result<(), Vec<GraphError>>>),
     SetPolicy(SafetyPolicy),
     Rescan,
+    /// Who is driving each channel. Answered between ticks like everything else, so it
+    /// cannot interleave with an evaluation in progress.
+    ChannelControls(Sender<Vec<(ChannelId, ChannelControl)>>),
+    /// Hand abandoned channels to the device's own control algorithm.
+    HandBackToFirmware(Vec<ChannelId>, Sender<Vec<(ChannelId, Result<(), String>)>>),
 }
 
 /// Handle to a running control loop.
@@ -143,6 +149,45 @@ impl EngineHandle {
         let _ = self.commands.send(Command::Rescan);
     }
 
+    /// Who is driving each channel.
+    ///
+    /// Empty if the loop is gone. A caller must not read that as "nothing is contended" —
+    /// it means the engine could not answer, which is a different thing entirely.
+    pub fn channel_controls(&self) -> Vec<(ChannelId, ChannelControl)> {
+        let (tx, rx) = channel();
+        if self.commands.send(Command::ChannelControls(tx)).is_err() {
+            return Vec::new();
+        }
+        rx.recv().unwrap_or_default()
+    }
+
+    /// Hand abandoned channels to the device's own control algorithm.
+    ///
+    /// Answers per channel: one header that will not take the write must not stop the
+    /// rest being rescued.
+    pub fn hand_back_to_firmware(
+        &self,
+        channels: Vec<ChannelId>,
+    ) -> Vec<(ChannelId, Result<(), String>)> {
+        let (tx, rx) = channel();
+        if self
+            .commands
+            .send(Command::HandBackToFirmware(channels.clone(), tx))
+            .is_err()
+        {
+            return channels
+                .into_iter()
+                .map(|id| (id, Err("the control loop is not running".to_owned())))
+                .collect();
+        }
+        rx.recv().unwrap_or_else(|_| {
+            channels
+                .into_iter()
+                .map(|id| (id, Err("the control loop stopped answering".to_owned())))
+                .collect()
+        })
+    }
+
     /// Stop the loop and wait for the dying breath to finish.
     pub fn stop(mut self) {
         self.stop_inner();
@@ -222,6 +267,12 @@ fn run_loop(
                 Ok(Command::Rescan) => {
                     engine.rescan();
                     *published.inventory.lock() = engine.inventory();
+                }
+                Ok(Command::ChannelControls(reply)) => {
+                    let _ = reply.send(engine.channel_controls());
+                }
+                Ok(Command::HandBackToFirmware(channels, reply)) => {
+                    let _ = reply.send(engine.hand_back_to_firmware(&channels));
                 }
                 Err(TryRecvError::Empty) => break,
                 // The handle is gone; the guard will hand the channels back.

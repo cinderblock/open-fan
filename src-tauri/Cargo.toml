@@ -21,6 +21,7 @@ tauri-build = { version = "2.6.3", features = [] }
 of-core = { workspace = true }
 of-engine = { workspace = true }
 of-hal = { workspace = true }
+of-contention = { workspace = true }
 of-hal-mock = { workspace = true }
 of-units = { workspace = true }
 of-ipc = { workspace = true }

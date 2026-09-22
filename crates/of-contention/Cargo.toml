@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+of-hal = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

@@ -47,10 +47,12 @@
 use std::time::Duration;
 
 mod known;
+pub mod plan;
 #[cfg(windows)]
 mod windows_impl;
 
 pub use known::{KNOWN_APPS, KnownApp, Role, lookup};
+pub use plan::{Blocker, ChannelSituation, Plan, Situation, hand_back_blocked_by, plan};
 
 /// Anything that can go wrong standing another application down.
 #[derive(Debug, thiserror::Error)]

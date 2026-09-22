@@ -14,6 +14,7 @@
 
 pub mod commands;
 pub mod state;
+mod takeover;
 
 use state::AppState;
 use tauri::{
@@ -119,6 +120,8 @@ pub fn run() {
             commands::rescan,
             commands::resolve_types,
             commands::snapshot,
+            takeover::contention_report,
+            takeover::take_over,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start OpenFan");

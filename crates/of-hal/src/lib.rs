@@ -126,6 +126,56 @@ pub trait OutputChannel {
     /// false, the engine's failsafe for these channels must be a fixed duty instead,
     /// because releasing would leave the chip in manual mode with nobody driving it.
     fn can_restore_firmware_control(&self) -> bool;
+
+    /// Who is driving this channel right now.
+    ///
+    /// Defaults to [`ChannelControl::Unknown`], which is the honest answer for a backend
+    /// that cannot inspect the hardware's control mode. Callers must treat `Unknown` as
+    /// "no information", never as "nobody else".
+    fn control_of(&self, channel: &ChannelId) -> Result<ChannelControl> {
+        let _ = channel;
+        Ok(ChannelControl::Unknown)
+    }
+
+    /// Hand a channel to the device's own control algorithm.
+    ///
+    /// **Not the same as [`release`](OutputChannel::release).** Release restores what
+    /// *this* backend recorded when it acquired the channel. This imposes firmware
+    /// control on a channel we may never have held — the recovery for one some other
+    /// application left in manual and abandoned, which is otherwise a channel with
+    /// nothing responding to temperature.
+    fn hand_back_to_firmware(&mut self, channel: &ChannelId) -> Result<()> {
+        Err(HalError::Unavailable(format!(
+            "this backend cannot hand {channel} back to firmware control"
+        )))
+    }
+}
+
+/// Who is driving an output channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ChannelControl {
+    /// The device's own algorithm — a BIOS fan curve or equivalent. Nothing external
+    /// needs to drive it, and it responds to temperature on its own.
+    Firmware,
+    /// We acquired it and are responsible for it.
+    Ours,
+    /// Under manual control that is not ours. Either another application is driving it,
+    /// or one left it this way and **nothing** is. Those look identical in a single
+    /// reading and need opposite responses, so they are not distinguished here.
+    Foreign,
+    /// The backend cannot tell. Not a synonym for "nobody else".
+    Unknown,
+}
+
+impl ChannelControl {
+    /// Whether something is demonstrably responsible for this channel.
+    ///
+    /// `Foreign` is deliberately *not* safe: it covers the abandoned case, where the duty
+    /// is frozen and nothing will react to a rising temperature.
+    pub fn is_accounted_for(self) -> bool {
+        matches!(self, Self::Firmware | Self::Ours)
+    }
 }
 
 /// A complete hardware backend.
