@@ -69,7 +69,77 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Print what the takeover panel would show, then exit.
+///
+/// `--diagnose` runs the *same* survey the panel calls, so a support report and the
+/// interface cannot disagree about what the machine looks like. It writes nothing to
+/// hardware.
+fn diagnose() {
+    // Progressive, and flushed: this runs before the tracing subscriber exists, and a
+    // diagnostic that prints nothing when it hangs tells you nothing about where.
+    let step = |what: &str| {
+        println!("... {what}");
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+    };
+
+    step("starting engine");
+    let state = AppState::new();
+
+    step("reading inventory");
+    let backend = state.engine.inventory().backend;
+
+    step("surveying contention");
+    let report = crate::takeover::survey(&state);
+
+    println!(
+        "
+backend: {backend}"
+    );
+    println!(
+        "
+channels:"
+    );
+    for channel in &report.channels {
+        println!("  {:<22} {:?}", channel.label, channel.control);
+    }
+
+    println!(
+        "
+other software:"
+    );
+    if report.apps.is_empty() {
+        println!("  (none recognised)");
+    }
+    for app in &report.apps {
+        println!(
+            "  {:<22} {:<26} pid {:<7} {:<11} {}",
+            app.name,
+            app.process_name,
+            app.pid,
+            app.role,
+            if app.must_stop {
+                "must stand down"
+            } else {
+                "can stay"
+            }
+        );
+    }
+
+    println!(
+        "
+stranded (manual, nobody driving): {:?}",
+        report.stranded
+    );
+    println!("clear: {}", report.clear);
+}
+
 pub fn run() {
+    if std::env::args().any(|arg| arg == "--diagnose") {
+        diagnose();
+        return;
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),

@@ -58,7 +58,7 @@ fn role_name(role: Role) -> &'static str {
 }
 
 /// Look at the machine and describe what stands between us and fan control.
-fn survey(state: &AppState) -> ContentionReport {
+pub(crate) fn survey(state: &AppState) -> ContentionReport {
     let labels: std::collections::BTreeMap<String, String> = state
         .engine
         .inventory()
