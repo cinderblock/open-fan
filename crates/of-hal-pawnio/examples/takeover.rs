@@ -215,6 +215,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // Restoring a firmware mode underneath a controller that is still running starts the
+    // tug-of-war this whole flow exists to end: we put the mode back, it puts the channel
+    // into manual again, and the user watches the two of us fight. Refuse rather than
+    // begin one.
+    //
+    // This check was written once, silently failed to apply, and shipped missing — after
+    // which a run did exactly what it forbids. It is asserted by a test for that reason.
+    let survivors: Vec<_> = controllers
+        .iter()
+        .filter(|r| of_contention::is_running(r.pid))
+        .collect();
+    if !survivors.is_empty() {
+        let names: Vec<String> = survivors
+            .iter()
+            .map(|r| format!("{} (pid {})", r.app.name, r.pid))
+            .collect();
+        return Err(format!(
+            "not restoring firmware control while {} is still running — it would put these \
+             channels straight back into manual and the two of us would fight over them. \
+             Close it first.",
+            names.join(", ")
+        )
+        .into());
+    }
+
     // --- 6. restore it ourselves ------------------------------------------------------
     println!(
         "\n{} channel(s) are stranded in manual. Restoring {template:?} ourselves.",
