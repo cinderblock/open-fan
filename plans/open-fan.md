@@ -290,7 +290,7 @@ Found running concurrently at survey time:
 | --- | --- |
 | `PawnIO.sys` | ours |
 | `AsIO2.sys` / `AsIO3.sys` (`Asusgio2`/`Asusgio3`) | ASUS Armoury Crate (`ArmourySocketServer`, running) |
-| `inpoutx64.sys` | direct port I/O shim used by the existing monitoring/fan stack |
+| `inpoutx64.sys` | direct port I/O shim, auto-start, owner unidentified — **not** FanControl (see below) |
 
 and, critically, **the existing fan control application is running and actively owns
 `control/0`, `control/1` and `control/4`** — the exact three headers we want.
@@ -383,6 +383,156 @@ Fetching from upstream also avoids us redistributing an LGPL-2.1 blob. The condi
   channels it already holds; a fan controller that blocks startup on the network has
   failed at its one job. Offline and locked-down machines are normal.
 - Missing module stays a clean degraded state, not an error dialogue.
+
+### Installing PawnIO for the user: what is actually available
+
+Surveyed 2026-09-21 on `Quasar`. The Phase 0 note that PawnIO "is a prerequisite install,
+not something we can bundle-and-forget" stands, but the options are better than that
+wording suggests — the *mechanism* is solved, and what is left is a licensing question and
+a consent question.
+
+**Upstream ships three first-party install channels:**
+
+| Channel | Identifier | Notes |
+| --- | --- | --- |
+| winget | `namazso.PawnIO`, **2.2.0**, released 2026-03-15 | Published by namazso. Manifest pins `PawnIO_setup.exe` SHA256 `1f519a22e47187f70a1379a48ca604981c4fcf694f4e65b734aaa74a9fba3032`, marks `Offline Distribution Supported: true`. |
+| Chocolatey | `pawnio` 2.2.0 | Community-maintained. *Embeds* the setup exe rather than downloading it, and invokes it as `-install -silent`. |
+| Direct | `github.com/namazso/PawnIO.Setup/releases` | Same signed `PawnIO_setup.exe`. |
+
+**The installer has a documented silent mode.** `PawnIO_setup.exe -install -silent`. The
+2.2.0 release notes record two things we must handle: CLI exit codes are **DOS errors, not
+NTSTATUS** (changed in 2.2.0 — so the code we parse depends on the version we invoke), and
+**silent mode returns `ERROR_SUCCESS_REBOOT_REQUIRED`** when a restart is needed. A driver
+install that quietly requires a reboot and is treated as success is a first-run state we
+would otherwise get wrong.
+
+2.2.0 also notes it "is now possible to expose the device to non-administrators, although
+not recommended" — relevant to the elevation finding above, but upstream advises against it
+and so do we. The service-vs-UAC answer stays Open Question 2.
+
+**The licensing is genuinely ambiguous and we should not guess.** The PawnIO *source* is
+GPL-2.0-or-later with the IOCTL-interface exception (README confirms both, and notes the
+exception "does not include programs that communicate with PawnIO over the Pawn
+interface"). But the signed **official edition** is a separate distribution, and the two
+package repositories disagree about it: winget's manifest says **"Proprietary
+(Freeware)"**, Chocolatey's says **GPL-2.0** pointing at `PawnIO/COPYING`. Neither
+`pawnio.eu` nor `PawnIO.Setup` states redistribution terms for the signed binary, and the
+site offers "custom licensing" on request via `admin@namazso.eu`.
+
+*Negative result: there is no published grant letting us redistribute the signed
+`PawnIO_setup.exe`.* Chocolatey embedding it is precedent, not permission. **Action: ask
+namazso directly before any plan that ships the bytes.** Until then, assume we may invoke
+the official installer but not mirror it.
+
+**Decision — user-initiated in-app install, not a bundled or silent one.** Same shape as
+the module-fetch decision above, for the same reason and one more:
+
+- **Not chained into the OpenFan installer.** Bundling a kernel-driver install into ours
+  makes our installer a driver installer, with the AV-reputation and elevation
+  consequences that implies, and forces the decision at the moment the user has least
+  context. It also breaks if PawnIO is already present at a newer version.
+- **Prefer winget when present** (`winget install --id namazso.PawnIO --exact`): the
+  manifest is namazso's own and winget verifies the hash. Fall back to the pinned direct
+  download, verified by **both** the SHA256 we ship **and** an Authenticode publisher
+  check, then `-install -silent`. Never "latest".
+- **Never silent from the user's point of view**, whatever switch we pass. The UAC prompt
+  is not the consent; an explicit "OpenFan needs the PawnIO kernel driver — here is what
+  it is, [Install]" screen is. Surprising a user is how trust in a tool with kernel access
+  is lost.
+- **Never uninstall it.** PawnIO is shared with LibreHardwareMonitor, OpenRGB, CapFrameX
+  and others. Removing it on OpenFan uninstall is a bug in someone else's program.
+- **Never on the control path**, and a missing driver stays a clean degraded state.
+- Handle **reboot-required** as its own outcome, distinct from success and from failure.
+
+**A fetcher is code, not bytes — and that is the whole point.** Shipping a tool that
+*downloads and invokes* the official installer distributes none of namazso's binary, so
+the redistribution ambiguity above never has to be resolved. This is what winget's own
+manifest is (metadata plus a URL and a hash) and what every VC++/.NET bootstrapper does.
+It changes nothing about our GPL/LGPL position, which was already clean.
+
+**We likely need no separate helper binary.** OpenFan cannot read one sensor without
+elevation, and first-run must already distinguish three states (no driver / no module /
+not elevated). An `[Install]` action on that screen is nearly free. A standalone elevated
+helper only becomes necessary if Open Question 2 resolves toward a service with an
+unelevated UI — then the helper is the thing that owns the UAC prompt. Decide it there,
+not here.
+
+**Run-time, not install-time — the run-time path is a strict superset.** Install-time
+chaining is a one-shot: it cannot handle PawnIO being removed later, nor version drift,
+and it makes our installer network-dependent and admin-requiring. We need run-time
+detection regardless, so chaining adds machinery without removing anything. If we ever
+want it, it must call the same code.
+
+**Do not hand-roll the driver install.** Creating the service and dropping the `.sys`
+ourselves means we own every partial-install state, on an object whose failure mode is a
+machine that will not boot. Invoke `PawnIO_setup.exe`; it is the supported path.
+
+**Mechanics the fetcher has to get right:**
+
+- GitHub release assets redirect cross-host to `objects.githubusercontent.com` — the
+  fetcher must follow the redirect.
+- A version-pinned asset URL **404s if upstream retags or deletes a release**. That is a
+  clean failure with a real remedy: show the user the URL and let them sideload. Offline
+  and locked-down machines are normal and must stay in the degraded read-only mode.
+- **Defer to whatever installed it.** If PawnIO came from winget or Chocolatey, running
+  `setup.exe` over it fights the package manager. Detect the source and offer that
+  manager's upgrade instead.
+- *Open question — the upgrade path from 2.0.x is undocumented.* 2.2.0 states only
+  "Support upgrading from 2.1.0 without uninstall"; 2.1.0's notes say nothing about
+  upgrading at all. So whether `2.0.1.0 → 2.2.0` is clean or needs an uninstall first is
+  **unknown**, and `Quasar` is the machine that would find out. Do not assume in-place
+  upgrade works for versions below 2.1.0.
+
+`Quasar` currently runs **2.0.1.0** while **2.2.0** is current, so "installed" and
+"installed at a version whose ABI we have tested" are different questions and first-run
+must ask the second one.
+
+### The other fan controller is also a PawnIO client — measured, not assumed
+
+Re-surveyed 2026-09-21. The "existing fan control application" on `Quasar` is **FanControl
+2.4.5** (`C:\Program Files (x86)\FanControl`, running as `FanControl.exe` plus a separate
+`FanControl.Service.exe`), and the question of whether it can share the bus with us is
+answerable by inspection rather than guesswork.
+
+Scanning its `LibreHardwareMonitorLib.dll` (**0.9.6.0**) for driver and mutex identifiers:
+
+| String | Present |
+| --- | --- |
+| `Global\Access_ISABUS.HTP.Method` | **yes** |
+| `LpcIO`, `LibreHardwareMonitor.Resources.PawnIo.LpcIO.bin` | **yes** |
+| `\?\GLOBALROOT\Device\PawnIO` | **yes** |
+| `WinRing0`, `Ring0`, `inpout` | **no** |
+
+Three consequences:
+
+1. **Bus-level coexistence is already solved, and the name matches byte for byte.** LHM
+   waits on the *same* `Global\Access_ISABUS.HTP.Method` that `of-hal-pawnio/src/isa.rs`
+   creates. Two PawnIO clients each holding their own handle get their own interpreter
+   instance, so both loading `LpcIO` is fine; the mutex is what keeps the index/data pairs
+   from interleaving. Nothing more is needed here, and nothing less is acceptable — the
+   mutex is not optional politeness, it is the whole mechanism.
+2. **LHM embeds `LpcIO.bin` as an assembly resource** rather than fetching it. That is
+   precedent that redistributing the LGPL-2.1 module blob is normal practice, which
+   weakens (but does not settle) the "fetch from upstream to avoid redistributing"
+   argument recorded above. Revisit if runtime fetch proves awkward offline.
+3. **LHM does not use `PawnIOLib.dll`** — no such string — it opens the device path
+   itself. PawnIO 2.2.0's release note about restoring "the old unused device path for
+   compatibility with broken third party PawnIOLib implementations" is about exactly this
+   class of client. We use the real `PawnIOLib` and are not in that category.
+
+`inpoutx64.sys` is running and auto-start, but LHM 0.9.6 contains no reference to it, so it
+is **not** FanControl's — the earlier attribution in the table above was wrong. Owner
+unidentified; likely part of the ASUS stack or a leftover. It matters only in that it is a
+port-I/O shim whose users may not take the ISA mutex at all.
+
+**What the mutex still does not buy us.** It serialises *transactions*, not *ownership*.
+PawnIO has no lease, claim or arbitration concept — nothing stops two processes from both
+setting `control/N` to manual and writing duties, and neither one reports the tug-of-war.
+FanControl currently owns `control/0`, `control/1` and `control/4`: the exact three headers
+we want. So the conclusion from the contention survey is unchanged and is *not* a PawnIO
+question — it is the policy question already settled under "Other applications are on the
+bus": stop FanControl and reboot before the first `acquire()` is trusted to capture
+restorable firmware state.
 
 ### Other applications are on the bus, and handling that is a product feature
 
