@@ -24,8 +24,10 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   type ChannelControlDto,
   type ContentionReport,
+  type ServiceStatus,
   type TakeoverResult,
   contentionReport,
+  serviceStatus,
   takeOver,
 } from './api';
 
@@ -56,6 +58,7 @@ const CONTROL_TEXT: Record<ChannelControlDto, { label: string; tone: string; det
 };
 
 export default function TakeoverPanel() {
+  const [service, setService] = useState<ServiceStatus | null>(null);
   const [report, setReport] = useState<ContentionReport | null>(null);
   const [result, setResult] = useState<TakeoverResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -63,6 +66,16 @@ export default function TakeoverPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    // The service is asked first and separately. Without it every other call fails, and
+    // "the background service is not running" is a far more useful thing to show than
+    // eight identical transport errors.
+    const status = await serviceStatus().catch(() => null);
+    setService(status);
+    if (!status?.running) {
+      setReport(null);
+      return;
+    }
+
     try {
       setReport(await contentionReport());
       setError(null);
@@ -89,6 +102,34 @@ export default function TakeoverPanel() {
       setBusy(false);
     }
   }, [force]);
+
+  // The service being absent is the most likely state on a fresh install, so it is
+  // explained rather than reported as a failure.
+  if (service && !service.running) {
+    return (
+      <section className="takeover">
+        <h2>Fan control</h2>
+        <p className="takeover__warn">{service.summary}</p>
+        <p className="takeover__muted">
+          The service is installed alongside OpenFan and starts with Windows. If it has
+          been stopped, start <strong>OpenFan fan control</strong> in Services, or
+          reinstall.
+        </p>
+        <button type="button" className="takeover__refresh" onClick={refresh}>
+          Re-check
+        </button>
+      </section>
+    );
+  }
+
+  if (service && !service.compatible) {
+    return (
+      <section className="takeover">
+        <h2>Fan control</h2>
+        <p className="takeover__warn">{service.summary}</p>
+      </section>
+    );
+  }
 
   if (error && !report) {
     return (

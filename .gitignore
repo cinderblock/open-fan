@@ -26,3 +26,4 @@ desktop.ini
 # Local runtime state — never commit a user's profiles or logs
 /local/
 *.log
+src-tauri/binaries/

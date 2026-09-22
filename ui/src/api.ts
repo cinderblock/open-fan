@@ -84,3 +84,19 @@ export const contentionReport = () => invoke<ContentionReport>('contention_repor
  * restores nothing it was controlling.
  */
 export const takeOver = (force: boolean) => invoke<TakeoverResult>('take_over', { force });
+
+/** What the editor knows about the background service. */
+export type ServiceStatus = {
+  running: boolean;
+  version: string | null;
+  compatible: boolean;
+  summary: string;
+};
+
+/**
+ * Is the service there, and does it speak our protocol?
+ *
+ * Hand-written rather than generated, because it describes the *connection* rather than
+ * anything the backend models — it has to be answerable when there is no backend to ask.
+ */
+export const serviceStatus = () => invoke<ServiceStatus>('service_status');

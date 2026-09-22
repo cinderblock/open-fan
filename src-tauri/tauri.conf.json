@@ -27,7 +27,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,6 +38,15 @@
       "icons/icon.ico"
     ],
     "shortDescription": "Node-graph fan control with typed connections.",
-    "longDescription": "OpenFan controls system fans from a node graph whose connections are typed by physical quantity. All control decisions run in the background service; the window is only an editor and can be closed without stopping control."
+    "longDescription": "OpenFan controls system fans from a node graph whose connections are typed by physical quantity. All control decisions run in the background service; the window is only an editor and can be closed without stopping control.",
+    "externalBin": [
+      "binaries/openfan-service"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsi",
+        "installMode": "perMachine"
+      }
+    }
   }
 }
