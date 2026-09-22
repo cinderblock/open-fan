@@ -771,18 +771,27 @@ Surveyed 2026-09-22, after the first installer was produced.
 them yet. The mechanical work is small: generate a keypair, set
 `createUpdaterArtifacts: true`, add the plugin and an endpoint, publish `latest.json`.
 
-**But the mechanical work is not the blocker.** Two things must land first, and both are
-safety rather than packaging.
+**Auto-update is independent of the takeover work.** They are different transitions with
+different mechanisms and neither gates the other; an earlier draft of this section wrongly
+implied otherwise.
 
-1. **The controlled handoff does not exist.** The architecture section already specifies
-   it: *apply failsafe → release hardware → swap binary → restart → reacquire*. Today an
-   update would replace the binary while OpenFan may be holding PWM channels in manual
-   mode. Whether the dying breath runs at all depends on how the updater terminates the
-   app, which is **unverified** — `EngineHandle`'s `Drop` covers a normal exit and a panic
-   unwind, and covers nothing about a process the updater kills. Get this wrong and an
-   update leaves fans frozen at whatever duty they had, with nothing responding to
-   temperature, until the new version starts. That is Phase 4's dying breath and external
-   watchdog, and auto-update must come after it, not alongside.
+**It is also not gated on Phase 4.** The handoff the architecture calls for is *already
+implemented for a normal exit*: `ControlThread`'s `Drop` runs `Engine::shutdown`, which
+applies the dying breath to every acquired channel, and `EngineHandle`'s `Drop` joins that
+thread — so any ordinary process exit, including tray-quit, hands channels back before the
+process goes away. What Phase 4 adds is the **hard-kill** case, which no amount of `Drop`
+can cover.
+
+So the genuine open question is narrow and answerable by experiment:
+
+1. **Does Tauri's updater exit the app normally or kill it?** If it exits normally the
+   existing dying breath already covers the swap. If it terminates the process, channels
+   stay wherever they were, with nothing responding to temperature until the new version
+   starts — and that case needs the external watchdog. **Verify before enabling
+   auto-update; do not assume either way.**
+
+   Worth keeping in proportion: today nothing is at risk regardless, because control is
+   opt-in and the engine acquires nothing until a graph drives a channel.
 
 2. **Elevation changes the update path.** The app now requires administrator. Tauri's NSIS
    updater spawns the installer, which will also need it; an already-elevated app should
