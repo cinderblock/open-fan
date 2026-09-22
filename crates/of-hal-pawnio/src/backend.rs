@@ -23,13 +23,31 @@
 //! * `release` restores the duty **before** the mode, so the firmware algorithm never
 //!   runs for an instant against a duty we chose.
 //!
+//! # Verified on hardware
+//!
+//! Acquire and release were exercised on an NCT6798D (channel 0, an empty header on the
+//! BIOS curve) on 2026-09-22:
+//!
+//! ```text
+//! recorded: mode=0x40 (SmartFanIv)  duty=186
+//! held:     mode=0x00 (Manual)      duty=186   <- taking it changed no speed
+//! after:    mode=0x40 (SmartFanIv)  duty=186   <- both bytes exactly restored
+//! then:     duty moved 186 -> 175 with nobody writing it
+//! ```
+//!
+//! That last line is the one that matters. Restoring a mode byte only proves a byte was
+//! written; the chip resuming control and moving the duty itself is what proves control
+//! was handed *back*.
+//!
 //! # Why `can_restore_firmware_control` still answers `false`
 //!
-//! The mechanism is exact, but the honest question is not "can we write the bytes back",
-//! it is "was what we captured actually the firmware's configuration". On a machine where
-//! another controller has already put a header into manual mode, it is not — we would
-//! capture that tool's duty and call restoring it "handing back to firmware". See the
-//! method's own note.
+//! Not because the mechanism is unproven — it is proven, above. Because the question is
+//! per-channel and this signature is per-backend. Restoring a channel we took *from the
+//! firmware* hands control back. Restoring one that was already in manual when we found
+//! it — because another application put it there — reinstates a fixed duty with no
+//! thermal response, which is faithful but is not firmware control and is not a good
+//! failsafe. Answering `true` for the whole backend would be a lie about the second case.
+//! See the method's own note.
 
 use std::collections::BTreeMap;
 
@@ -398,18 +416,21 @@ impl OutputChannel for SuperIoBackend {
     }
 
     fn can_restore_firmware_control(&self) -> bool {
-        // The mechanism exists and is exact — `release` writes back the captured bytes,
-        // and a round-trip test proves no mode value loses information.
+        // The mechanism is proven on hardware — see the module docs. This `false` is not
+        // about capability.
         //
-        // It still answers `false`, because the honest question is not "can we write the
-        // bytes back" but "is what we captured actually the firmware's configuration".
-        // On a machine where another controller already put a header in manual mode, it
-        // is not: we would capture that tool's manual duty and call restoring it "handing
-        // back to firmware". Answering `true` requires knowing the channel was
-        // firmware-controlled when we took it, which is per-channel state this trait's
-        // signature cannot express. Until that is resolved, `false` makes the engine
-        // failsafe to a fixed duty, which is never wrong — only sometimes louder than
-        // necessary.
+        // It is about the question being per-channel while this signature is
+        // per-backend. `acquire` already records which it was: a channel taken from a
+        // firmware mode can genuinely be handed back, and one found in manual cannot,
+        // because restoring it reinstates a fixed duty with no thermal response. Both
+        // exist simultaneously on the reference machine.
+        //
+        // Answering `true` would be a lie about the second kind, so we answer for the
+        // weakest channel. The cost is that the engine failsafes to a fixed duty even
+        // where releasing would have been better — never wrong, sometimes louder than
+        // necessary. Fixing it properly means `can_restore_firmware_control(&self,
+        // channel: &ChannelId)`, which is an `of-hal` change affecting the mock and the
+        // engine's policy tests.
         false
     }
 }
