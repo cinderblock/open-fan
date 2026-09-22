@@ -770,3 +770,82 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   - Knock-on: layout now classifies nodes by their catalogue **category** rather than by
     counting ports. `FanOutput` has an output now, and port-counting put the sink in the
     middle of the graph.
+- **2026-09-22** — **Phase 3 Step 3 complete: PWM control works and hands back.** All five
+  items of the control sequence verified on `Quasar`'s NCT6798D, in the required order,
+  with Cameron present. Every write was on **channel 0 — the chassis header, which has
+  nothing plugged into it** and was the only channel still under firmware control, so a
+  mistake could neither stall a fan nor stop any cooling.
+
+  ```text
+  before:    mode=SmartFanIv  duty=71.8 %
+  recorded:  mode=0x40 (SmartFanIv)  duty=181
+  held:      mode=0x00 (Manual)      duty=181   <- taking it changed no speed
+  commanded: 242   read back: 242 (94.9 %)
+  held 3s:   242                                <- firmware is not overriding us
+  fan/0:     0 RPM                              <- nothing connected, as expected
+  after:     mode=0x40  duty=181                <- both bytes restored exactly
+  then:      duty moved 181 -> 178 with nobody writing it
+  ```
+
+  Reproduced four times; the acquire/release half ran three times standalone first. The
+  final register state was confirmed independently from a fresh dump each time, not taken
+  from the program's own report.
+
+  The last line is the one that matters. Restoring a mode byte only proves a byte was
+  written — the chip *resuming control and moving the duty itself* is what proves control
+  went back. That is now a checked outcome of the test, not an inference.
+
+  Things this established, beyond "it works":
+  - **The PWM write registers are not the readback registers.** `0x109/0x209/0x309/0x809/
+    0x909/0xA09/0xB09` versus `0x01/0x03/0x11/0x13/0x15/0x17/0x19`. Recall had these
+    conflated. A duty written to a readback address does nothing at all: the firmware keeps
+    choosing the speed while we believe we are driving the fan. Separate tables, with a
+    test asserting they differ.
+  - **The fan mode register's low nibble is the firmware's tolerance setting** and must be
+    preserved when switching to manual, or `release` is a lossy restore.
+  - **Two orderings are load-bearing.** `acquire` writes the duty it just read *before*
+    switching to manual, or the fan jumps to whatever was last in the manual register.
+    `release` restores duty *before* mode, so the firmware algorithm never runs for an
+    instant against a duty we chose. Verified: `held` duty equalled `recorded` duty on
+    every run.
+  - **A firmware-controlled duty drifts continuously**, which broke the first version of
+    the test. Comparing a duty read before a confirmation prompt with one read after
+    measures how long the operator took, not whether the restore worked — the error was 13
+    raw counts when the prompt sat unanswered and 2 when answered quickly. Verification is
+    now against the bytes `acquire` recorded. **Any future check involving a
+    firmware-controlled duty must not assume it is stable.**
+
+  Left deliberately undone, and why:
+  - **No fan has actually been driven yet.** Channel 0 is empty. Proving a *fan responds*
+    means channel 1, the only fan cooling this CPU, and that needs the other controller
+    stopped and a reboot first — see below.
+  - **`min_reliable_duty` is still `None`.** The stall point cannot be measured without a
+    fan, and it is the one experiment where going quiet is the goal.
+  - **Control stays opt-in.** `enable_control()` is called only by the `control-test`
+    example; the application does not call it, so the app remains read-only.
+
+- **2026-09-22** — **`can_restore_firmware_control()` is per-backend but the truth is
+  per-channel.** Now a concrete finding rather than a worry, because both cases exist on
+  `Quasar` simultaneously:
+
+  | | mode when found | releasing it means |
+  | --- | --- | --- |
+  | channel 0 | Smart Fan IV | genuinely handing control back to firmware |
+  | channels 1, 4 | Manual (another controller put them there) | reinstating a fixed duty with **no thermal response** |
+
+  `acquire` already records which. The trait signature cannot express it, so the backend
+  answers for its weakest channel — `false` — and the engine failsafes to a fixed duty even
+  where releasing would have been better. Never wrong, sometimes louder than necessary.
+
+  **Recommendation for Phase 4:** change the trait to
+  `can_restore_firmware_control(&self, channel: &ChannelId) -> bool`. This touches
+  `of-hal`, `of-hal-mock` and `of-engine`'s policy tests, and it makes Open Question 4's
+  answer — "restore firmware control where possible, 100 % where not" — expressible per
+  channel, which is the granularity it was always about.
+
+- **2026-09-22** — Gap confirmed by accident, worth keeping. The first `control-test` run
+  aborted at a confirmation prompt, and an early version would have returned there
+  *without releasing*, leaving the channel in manual with nobody driving it. Fixed by
+  releasing unconditionally. **The same gap exists in the engine**: a hard kill between
+  `acquire` and `release` strands the channel. That is supervisor layer 5, the external
+  watchdog, and today is evidence it is not a hypothetical.
