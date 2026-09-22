@@ -782,22 +782,42 @@ thread — so any ordinary process exit, including tray-quit, hands channels bac
 process goes away. What Phase 4 adds is the **hard-kill** case, which no amount of `Drop`
 can cover.
 
-So the genuine open question is narrow and answerable by experiment:
+**Both earlier worries are now answered, and the service answered them.**
 
-1. **Does Tauri's updater exit the app normally or kill it?** If it exits normally the
-   existing dying breath already covers the swap. If it terminates the process, channels
-   stay wherever they were, with nothing responding to temperature until the new version
-   starts — and that case needs the external watchdog. **Verify before enabling
-   auto-update; do not assume either way.**
+**Can an unelevated app launch the elevated installer?** Yes. `tauri-plugin-updater` uses
+`ShellExecuteW` with the `open` verb, which honours the target's manifest and elevates —
+read from its source rather than assumed. Had it used `CreateProcess`, this would have
+failed outright with `ERROR_ELEVATION_REQUIRED`, which is exactly what happened in this
+session when a non-elevated shell tried to launch a `requireAdministrator` binary. So
+**self-update works, at the cost of one UAC prompt per update.**
 
-   Worth keeping in proportion: today nothing is at risk regardless, because control is
-   opt-in and the engine acquires nothing until a graph drives a channel.
+**Does the swap strand the fans?** No, and this is now observed rather than reasoned
+about. The window holds no channels — the service does — and the installer stops the
+service before replacing files. The service log across a real upgrade:
 
-2. **Elevation changes the update path.** The app now requires administrator. Tauri's NSIS
-   updater spawns the installer, which will also need it; an already-elevated app should
-   pass that on without a second prompt, but *should* is not *does* and it needs testing.
-   `installMode` matters here too — a per-machine install into Program Files needs
-   elevation to update, a per-user one does not.
+```text
+stop requested; handing channels back
+channels handed back; stopping
+    <- files replaced here
+found real hardware -> starting control loop -> running
+```
+
+The updater calling `std::process::exit(0)` immediately after `ShellExecuteW`, which runs
+no destructors, therefore does not matter: the process it kills owns nothing.
+
+**A bug this uncovered.** `--install` called `create_service` unconditionally and failed
+with "service already exists" on any reinstall. Since the preinstall hook stops the old
+service first, that failure would have left a *stopped* service pointing at a replaced
+binary — fan control silently gone after an update. Registration is idempotent now and
+re-points an existing entry at the current directory.
+
+**The prompt-free alternative, if it is ever worth it.** The service runs as LocalSystem
+and can already write to its own install directory, so it could apply updates itself with
+no prompt at all — which is how Chrome and similar products do it. Not done, and not
+obviously worth doing: it means a service that downloads and executes code from the
+network, which is a much larger security surface than a user clicking through one UAC
+dialogue. Tauri's minisign check would still gate it, but the blast radius of a mistake is
+different. Revisit only if per-update prompts become a real complaint.
 
 **Two adjacent facts worth not confusing.** Tauri's signing (minisign) authenticates the
 *update payload*, and is what stops a malicious update being accepted. **Authenticode** is
