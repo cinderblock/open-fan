@@ -11,6 +11,7 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 
 import type { PortDto } from '../api';
+import type { DeviceRole } from '../graph';
 import { formatValue, styleOf } from '../quantities';
 
 export interface TypedNodeData extends Record<string, unknown> {
@@ -22,6 +23,11 @@ export interface TypedNodeData extends Record<string, unknown> {
   readouts?: Record<string, number>;
   /** Validation messages the backend attributed to this node. */
   errors?: string[];
+  /**
+   * Set when this node shares hardware with another one — a fan output and the sensor
+   * reading its tachometer. Gives the dashed same-device link somewhere to attach.
+   */
+  device?: DeviceRole;
 }
 
 export type TypedNodeType = Node<TypedNodeData, 'typed'>;
@@ -98,6 +104,19 @@ export default function TypedNode({ data, selected }: NodeProps<TypedNodeType>) 
           />
         ))}
       </div>
+
+      {/* Data flows left to right, so the same-device link leaves from the bottom.
+          Attaching it to a data handle would make one lump of hardware look like a
+          value being passed around. */}
+      {data.device && (
+        <Handle
+          type={data.device === 'source' ? 'source' : 'target'}
+          position={Position.Bottom}
+          id="device"
+          className="port-handle port-handle--device"
+          isConnectable={false}
+        />
+      )}
 
       {/* Errors are shown inline rather than in a tooltip: the whole point of reporting
           every problem at once is that they are all visible at once. */}

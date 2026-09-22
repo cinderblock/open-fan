@@ -49,9 +49,13 @@ import {
   toFlowEdges,
   toFlowNodes,
   toPortTypeMap,
+  deviceEdgeId,
+  deviceLinks,
+  deviceRoles,
   type PortTypeMap,
 } from './graph';
 import { placeNode } from './layout';
+import type { DeviceHint } from './NodeInspector';
 import TypedNode, { type TypedNodeType } from './nodes/TypedNode';
 import { connects, rejectionReason, styleOf } from './quantities';
 import Sidebar from './Sidebar';
@@ -123,6 +127,11 @@ export default function App() {
 
   const errorsByNode = useMemo(() => groupErrors(errors), [errors]);
 
+  // Fan outputs and the sensors reading their tachometers are the same hardware. The
+  // graph stays a DAG — a tach is a measurement, not a return value — so the link is
+  // drawn rather than wired.
+  const links = useMemo(() => (graph ? deviceLinks(graph, hardware) : []), [graph, hardware]);
+
   useEffect(() => {
     if (!graph) return;
     // Rebuild structure only when the document or catalogue changes. Readouts and
@@ -130,7 +139,7 @@ export default function App() {
     // rebuild resets every node to its *document* position — discarding drags that have
     // not been applied yet.
     setNodes(
-      toFlowNodes(graph, catalogue, portTypes).map((node) =>
+      toFlowNodes(graph, catalogue, portTypes, deviceRoles(links)).map((node) =>
         node.id === selectedId ? { ...node, selected: true } : node,
       ),
     );
@@ -138,7 +147,7 @@ export default function App() {
     // `selectedId` is deliberately not a dependency: re-selecting should not rebuild the
     // whole canvas, it only needs to survive a rebuild that happens for another reason.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph, catalogue, portTypes, setNodes, setEdges]);
+  }, [graph, catalogue, portTypes, links, setNodes, setEdges]);
 
   useEffect(() => {
     setNodes((current) =>
@@ -243,16 +252,35 @@ export default function App() {
     [quantityOf, setEdges],
   );
 
-  const styledEdges = useMemo(
-    () =>
-      edges.map((edge) => {
-        const q = quantityOf(edge.source, edge.sourceHandle, 'source');
-        return q
-          ? { ...edge, style: { stroke: styleOf(q).color, strokeWidth: 2, ...edge.style } }
-          : edge;
-      }),
-    [edges, quantityOf],
-  );
+  const styledEdges = useMemo(() => {
+    const data = edges.map((edge) => {
+      const q = quantityOf(edge.source, edge.sourceHandle, 'source');
+      return q
+        ? { ...edge, style: { stroke: styleOf(q).color, strokeWidth: 2, ...edge.style } }
+        : edge;
+    });
+
+    // Same-device links are drawn, never stored: they are derived from the hardware
+    // inventory, not part of the document. Building them here rather than in `edges`
+    // keeps them out of everything that folds the canvas back into the graph.
+    const device: Edge[] = links.map((link) => ({
+      id: deviceEdgeId(link),
+      source: link.fanNodeId,
+      sourceHandle: 'device',
+      target: link.sensorNodeId,
+      targetHandle: 'device',
+      type: 'smoothstep',
+      selectable: false,
+      deletable: false,
+      focusable: false,
+      label: 'same device',
+      labelBgPadding: [4, 2] as [number, number],
+      className: 'edge--device',
+      style: { strokeDasharray: '4 4', strokeWidth: 1.5 },
+    }));
+
+    return [...data, ...device];
+  }, [edges, quantityOf, links]);
 
   // --- Editing -------------------------------------------------------------------------
 
@@ -300,6 +328,42 @@ export default function App() {
     [graph, nodes, edges],
   );
 
+  /**
+   * Add a sensor node already pointing at a specific sensor.
+   *
+   * Used by the tachometer hint. The quantity is set alongside the id for the same
+   * reason the picker does it: they fault when mismatched.
+   */
+  const addSensorFor = useCallback(
+    (sensorId: string) => {
+      if (!graph) return;
+      const descriptor = catalogue.find((d) => d.kind === 'sensor');
+      const sensor = hardware?.sensors.find((s) => s.id === sensorId);
+      if (!descriptor || !sensor) return;
+
+      const current = applyToGraph(graph, nodes, edges);
+      const id = freshId(current, descriptor.kind);
+      const placed = placeNode(nodes, descriptor);
+      setLocalGraph({
+        ...current,
+        nodes: {
+          ...current.nodes,
+          [id]: {
+            kind: {
+              ...structuredClone(descriptor.template),
+              sensor_id: sensor.id,
+              quantity: sensor.quantity,
+            } as NodeInstance['kind'],
+            label: '',
+            position: [placed.x, placed.y],
+          },
+        },
+      });
+      setDirty(true);
+    },
+    [graph, catalogue, hardware, nodes, edges],
+  );
+
   const deleteSelected = useCallback(() => {
     if (!graph) return;
     const doomed = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
@@ -340,6 +404,22 @@ export default function App() {
     setDirty(false);
     setLocalGraph(await getGraph());
   }, []);
+
+  const selectedDevice = useMemo<DeviceHint | null>(() => {
+    if (!selectedId || !graph || !hardware) return null;
+    const kind = graph.nodes[selectedId]?.kind as unknown as Record<string, unknown> | undefined;
+    if (!kind || kind.kind !== 'fan-output' || typeof kind.channel !== 'string') return null;
+
+    const channel = hardware.channels.find((c) => c.id === kind.channel);
+    if (!channel?.tachometer) return null;
+
+    const sensor = hardware.sensors.find((s) => s.id === channel.tachometer);
+    return {
+      sensorId: channel.tachometer,
+      label: sensor?.label ?? channel.tachometer,
+      present: links.some((l) => l.fanNodeId === selectedId),
+    };
+  }, [selectedId, graph, hardware, links]);
 
   // --- Render --------------------------------------------------------------------------
 
@@ -400,7 +480,9 @@ export default function App() {
               null)
             : null
         }
+        selectedDevice={selectedDevice}
         onChangeNode={updateNode}
+        onAddSensor={addSensorFor}
       />
 
       {rejection && (

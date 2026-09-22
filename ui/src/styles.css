@@ -603,3 +603,57 @@ body {
   background: var(--panel);
   border: 2px dashed var(--text);
 }
+
+/* --- Same-device links ---------------------------------------------------------- */
+
+/* Data flows left to right; this handle sits underneath so a shared-hardware link is
+   never mistaken for a value being passed along. */
+.port-handle--device {
+  width: 7px;
+  height: 7px;
+  background: var(--text-dim) !important;
+  border: none;
+  opacity: 0.55;
+}
+
+.edge--device .react-flow__edge-path {
+  stroke: var(--text-dim);
+  opacity: 0.7;
+}
+
+.edge--device .react-flow__edge-text {
+  fill: var(--text-dim);
+  font-size: 10px;
+}
+
+.edge--device .react-flow__edge-textbg {
+  fill: var(--bg);
+}
+
+.device-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #1a2029;
+  border: 1px solid var(--panel-border);
+  border-left: 3px solid var(--text-dim);
+  border-radius: 5px;
+}
+
+.device-hint__text {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.device-hint__text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.device-hint__linked {
+  font-size: 11px;
+  color: var(--ok);
+}

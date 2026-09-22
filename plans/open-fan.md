@@ -394,3 +394,23 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   - Gotcha: leaving `tauri dev` running during a large refactor corrupts incremental
     artifacts — it rebuilds the same `target/` concurrently. Symptom is a link error
     about `unresolved external symbol anon...llvm...`; fix is `cargo clean -p <crate>`.
+- **2026-09-21** — **Tachometers stay out of the graph.** Decided that a fan's tachometer
+  is a separate sensor source rather than an output of its `FanOutput` node, so the graph
+  remains a true DAG.
+  - A tach reading is a *measurement*, not a return value: what was commanded and what
+    actually happened can differ a great deal (a stalled fan reads quiet and is not
+    cooling). Modelling it as an output of the command node conflates the two, and invites
+    reasoning about it as instantaneous when it necessarily reflects an earlier duty.
+  - The pairing is not 1:1 in reality either — a tach can exist on a header we do not
+    drive, and a header can have none — so the loop-back model would encode a relationship
+    the hardware does not have.
+  - The association is still shown: the editor draws a dashed "same device" link between a
+    fan output and any sensor node reading its channel's tachometer, derived from
+    `ChannelInfo.tachometer` in the inventory. It leaves the *bottom* of both nodes, since
+    data flows left to right and a shared-hardware link is not data.
+  - Those edges are rendered, never stored. They are built in the render memo rather than
+    in edge state, so nothing that folds the canvas back into the document can pick them up.
+  - **Still missing: a Delay node.** Genuine feedback (stall detection raising duty) is a
+    cycle, and the evaluator rejects cycles by design. The intended escape hatch is an
+    explicit one-tick delay, which was listed in the original node families and has not
+    been built. Until it exists, closed-loop-on-RPM control is not expressible.

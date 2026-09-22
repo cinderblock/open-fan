@@ -32,7 +32,23 @@ interface Props {
    * generic — units then read as bare numbers, which is the honest rendering.
    */
   nodeType: Quantity | null;
+  /**
+   * The tachometer belonging to this node's channel, when it has one.
+   *
+   * A header and its tachometer are one device, but the tach is a measurement rather
+   * than a return value, so it lives in its own node. Saying so here is what stops that
+   * being a thing you have to already know.
+   */
+  device: DeviceHint | null;
   onChange: (next: NodeInstance) => void;
+  onAddSensor: (sensorId: string) => void;
+}
+
+export interface DeviceHint {
+  sensorId: string;
+  label: string;
+  /** Whether a sensor node already reads it. */
+  present: boolean;
 }
 
 /**
@@ -367,7 +383,9 @@ export default function NodeInspector({
   descriptor,
   inventory,
   nodeType,
+  device,
   onChange,
+  onAddSensor,
 }: Props) {
   const labelId = useId();
   const kind = node.kind as unknown as KindRecord;
@@ -404,6 +422,26 @@ export default function NodeInspector({
           />
         </Field>
       ))}
+
+      {device && (
+        <div className="device-hint">
+          <span className="device-hint__text">
+            Speed is read by <strong>{device.label}</strong>. It is a separate sensor
+            node, not an output of this one — the reading reflects an earlier duty.
+          </span>
+          {device.present ? (
+            <span className="device-hint__linked">Linked on the canvas</span>
+          ) : (
+            <button
+              type="button"
+              className="button button--small"
+              onClick={() => onAddSensor(device.sensorId)}
+            >
+              Add its sensor node
+            </button>
+          )}
+        </div>
+      )}
 
       {!descriptor && (
         <p className="field__help">

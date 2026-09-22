@@ -8,7 +8,7 @@
  */
 import type { Edge as FlowEdge } from '@xyflow/react';
 
-import type { Graph, NodeDescriptor, NodeInstance, PortDto } from './api';
+import type { Graph, HardwareInventory, NodeDescriptor, NodeInstance, PortDto } from './api';
 import type { PortTypeDto } from './bindings/PortTypeDto';
 import type { Quantity } from './bindings/Quantity';
 import type { TypedNodeType } from './nodes/TypedNode';
@@ -81,6 +81,7 @@ export function toFlowNodes(
   graph: Graph,
   catalogue: NodeDescriptor[],
   types: PortTypeMap,
+  devices: Map<string, DeviceRole> = new Map(),
 ): TypedNodeType[] {
   return Object.entries(graph.nodes).map(([id, node]) => {
     const tag = kindTag(node);
@@ -96,6 +97,7 @@ export function toFlowNodes(
         subtitle: subtitleOf(node, descriptor),
         inputs,
         outputs,
+        device: devices.get(id),
       },
     };
   });
@@ -169,4 +171,87 @@ export function groupErrors(errors: { message: string; nodeId: string | null }[]
     byNode.set(error.nodeId, [...(byNode.get(error.nodeId) ?? []), error.message]);
   }
   return byNode;
+}
+
+// --- Same-device links ----------------------------------------------------------------
+
+/**
+ * A fan output and a sensor node that happen to be the same physical device.
+ *
+ * The tachometer on a header is a *measurement*, not a return value from driving it, so
+ * it is an ordinary sensor source and the graph stays a true DAG. But the two nodes are
+ * one lump of hardware, and a graph that does not show that is lying by omission — hence
+ * the dashed link the editor draws between them.
+ */
+export interface DeviceLink {
+  fanNodeId: string;
+  sensorNodeId: string;
+  channelId: string;
+  sensorId: string;
+}
+
+/** Which role a node plays in a same-device link, for the extra handle it needs. */
+export type DeviceRole = 'source' | 'target';
+
+/**
+ * Find fan outputs and sensors that refer to the same device.
+ *
+ * The pairing comes from the hardware inventory, which is the only thing that actually
+ * knows a header and a tachometer belong together.
+ */
+export function deviceLinks(
+  graph: Graph,
+  inventory: HardwareInventory | null,
+): DeviceLink[] {
+  if (!inventory) return [];
+
+  const tachOf = new Map(
+    inventory.channels
+      .filter((c) => c.tachometer)
+      .map((c) => [c.id, c.tachometer as string]),
+  );
+
+  const fans: { id: string; channel: string }[] = [];
+  const sensors: { id: string; sensorId: string }[] = [];
+  for (const [id, node] of Object.entries(graph.nodes)) {
+    const kind = node.kind as unknown as Record<string, unknown>;
+    if (kind.kind === 'fan-output' && typeof kind.channel === 'string' && kind.channel) {
+      fans.push({ id, channel: kind.channel });
+    }
+    if (kind.kind === 'sensor' && typeof kind.sensor_id === 'string' && kind.sensor_id) {
+      sensors.push({ id, sensorId: kind.sensor_id });
+    }
+  }
+
+  const links: DeviceLink[] = [];
+  for (const fan of fans) {
+    const tach = tachOf.get(fan.channel);
+    if (!tach) continue;
+    for (const sensor of sensors) {
+      if (sensor.sensorId !== tach) continue;
+      links.push({
+        fanNodeId: fan.id,
+        sensorNodeId: sensor.id,
+        channelId: fan.channel,
+        sensorId: tach,
+      });
+    }
+  }
+  return links;
+}
+
+/** The device-link handle each node needs, if any. */
+export function deviceRoles(links: DeviceLink[]): Map<string, DeviceRole> {
+  const roles = new Map<string, DeviceRole>();
+  for (const link of links) {
+    // The link is drawn fan -> sensor: the thing we drive, and the thing that reports
+    // back on it.
+    roles.set(link.fanNodeId, 'source');
+    roles.set(link.sensorNodeId, 'target');
+  }
+  return roles;
+}
+
+export function deviceEdgeId(link: DeviceLink): string {
+  return `device:${link.fanNodeId}~${link.sensorNodeId}`;
 }

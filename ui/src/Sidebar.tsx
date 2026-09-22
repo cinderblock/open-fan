@@ -14,7 +14,7 @@ import type {
   SnapshotDto,
   ValidationError,
 } from './api';
-import NodeInspector from './NodeInspector';
+import NodeInspector, { type DeviceHint } from './NodeInspector';
 import { kindTag } from './graph';
 import type { NodeCategory } from './bindings/NodeCategory';
 import type { Quantity } from './bindings/Quantity';
@@ -39,11 +39,13 @@ interface Props {
   selectedId: string | null;
   selectedNode: NodeInstance | null;
   selectedType: Quantity | null;
+  selectedDevice: DeviceHint | null;
   onAdd: (descriptor: NodeDescriptor) => void;
   onApply: () => void;
   onRevert: () => void;
   onDelete: () => void;
   onChangeNode: (id: string, next: NodeInstance) => void;
+  onAddSensor: (sensorId: string) => void;
 }
 
 function EngineStatus({
@@ -108,11 +110,13 @@ export default function Sidebar({
   selectedId,
   selectedNode,
   selectedType,
+  selectedDevice,
   onAdd,
   onApply,
   onRevert,
   onDelete,
   onChangeNode,
+  onAddSensor,
 }: Props) {
   const grouped = useMemo(() => {
     const byCategory = new Map<NodeCategory, NodeDescriptor[]>();
@@ -175,7 +179,9 @@ export default function Sidebar({
           descriptor={catalogue.find((d) => d.kind === kindTag(selectedNode))}
           inventory={hardware}
           nodeType={selectedType}
+          device={selectedDevice}
           onChange={(next) => onChangeNode(selectedId, next)}
+          onAddSensor={onAddSensor}
         />
       )}
 
