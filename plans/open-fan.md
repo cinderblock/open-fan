@@ -818,6 +818,61 @@ runs elevated at boot and makes both problems disappear.
 uninstalls. A PawnIO *version* change is a separate matter and first-run already
 distinguishes "installed" from "installed at a version we have tested".
 
+### The service: implemented, and what it settled
+
+Built 2026-09-22 and verified on `Quasar` by installing it. Option **D** from the
+elevation table above; the other three are now history rather than alternatives.
+
+```
+Service   OpenFan fan control   LocalSystem, Automatic, C:\Program Files\OpenFan\openfan-service.exe
+Window    open-fan.exe          asInvoker — no UAC prompt, ever
+Between   \.\pipe\OpenFan      newline-delimited JSON
+```
+
+**What it dissolved.** Elevation, autostart and boot-time control were three problems with
+one answer. The window asks for nothing, so `requireAdministrator` is gone and with it the
+conflict that made "start with Windows" impossible. The service starts before any login
+and keeps running across logoff.
+
+**What it cost.** Nothing safety-critical moved: `of-engine` was always a plain library
+with no opinion about its host, which was the point of writing it that way. Two new
+crates — `of-rpc` for the boundary, `of-service` for the host — and the takeover flow
+moved from the Tauri layer to the service, because that is where the hardware is now.
+
+**Two protocol decisions worth not undoing.** There is no request that stops fan control,
+releases channels or shuts the service down — stopping it is an administrative act through
+the service control manager, because a fan controller any user process can silently switch
+off is not a fan controller, and a test pins the request surface. And a malformed request
+is answered rather than dropped, so a client can tell a protocol bug from an absent
+service.
+
+**The pipe's DACL is a real trust boundary.** LocalSystem and Administrators get full
+access; authenticated users get read and write, because otherwise an unelevated editor
+cannot talk to us at all. So any process running as the logged-in user can command the
+fans — the same authority it already has over that desktop, and the price of not prompting
+for administrator every time someone looks at a fan curve. Bounded by the two decisions
+above.
+
+**Stopping is a safety operation.** `STOP`, `SHUTDOWN` and `PRESHUTDOWN` all mean the same
+thing; the host is dropped *before* `STOPPED` is reported, so the dying breath actually
+runs; `StopPending` asks for 30 seconds first. The uninstaller stops and removes the
+service **before deleting any file**, because deleting a running service's binary would
+leave fans wherever OpenFan last set them with nothing responding to temperature.
+
+**The bug that only a service could have.** First start as LocalSystem found no hardware
+and quietly used the simulated backend on a machine with real fans. The PawnIO module
+cache was per-user, and a service's `%LOCALAPPDATA%` is
+`C:\Windows\System32\config\systemprofile\AppData\Local` — not the logged-in user's. Module
+discovery now searches `%ProgramData%\OpenFan\pawnio-modules` first. **Any path derived
+from the "current user" is suspect in this codebase now**; the engine's user is
+LocalSystem.
+
+**Still open.** The installer does not place the PawnIO module, so a fresh machine still
+needs one — that is the runtime-fetch item already in the backlog, and it must write to
+`%ProgramData%` rather than a user directory. The tray application's own autostart is
+still registered through the Run key, which now works again but starts only the *window*;
+the service needs no such help.
+
 ### When to elevate: the options, and what the neighbours do
 
 Requiring administrator is **normal for this class of application** — nothing that reads a
@@ -936,7 +991,11 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
    motherboard model, the Super I/O / EC chip, and the fan header map. Easiest path: run
    HWiNFO64 there and send me a sensor dump, or give me a shell on it. Everything in
    Phase 3 is blocked on this. *(Blocking for Phase 3 only — Phases 1–2 proceed regardless.)*
-2. **Should the control engine eventually run as a Windows service?** A service would
+2. ~~**Should the control engine eventually run as a Windows service?**~~ **Answered:
+   yes, and it does.** Implemented 2026-09-22 — see the Findings entry. Kept below for the
+   reasoning that led there.
+
+   **Should the control engine eventually run as a Windows service?** A service would
    control fans at boot before any login and survive logoff, which is strictly safer. The
    cost is UI↔service IPC, an admin installer, and restricted access to some GPU sensor
    APIs from session 0. *Recommendation:* keep the engine in a library crate that can be
