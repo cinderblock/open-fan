@@ -760,6 +760,55 @@ have caught it; verifying that the edit landed would have. Two follow-ups:
   AIO pump deliberately held at 23 % which jumped to 100 %. A takeover that changes a
   user's fan behaviour must say so *before* acting, not after.
 
+### Self-update: two paths, and why the silent one is the constrained one
+
+Implemented 2026-09-22, after the service made a genuinely prompt-free update possible.
+Self-updating is a required feature, and so is being able to do it silently.
+
+| Path | Who runs the installer | Prompt | Default |
+| --- | --- | --- | --- |
+| **Silent** | the service, as LocalSystem | none | **off** — opt-in |
+| **Prompted** | the window, via `ShellExecuteW` | one UAC dialogue | on |
+
+Both install the same signed artifact; only the prompt differs. That is a choice a user
+should get to make, and the interface offers it as one.
+
+**The silent path is the most dangerous capability in the product.** A LocalSystem service
+that downloads and executes code outranks one that spins fans by a wide margin. So the
+rules, all of which are load-bearing:
+
+- **The service decides what it installs.** Feed URL and verifying key are compiled in
+  (overridable at *build* time only). Nothing arriving over the pipe can supply a URL,
+  file, version, signature or key. A caller may say "check now" and "install what you
+  found" — that is the whole of its influence. Demonstrated: `applyUpdate` against a
+  service that has found nothing answers *"no update has been found; check first"*.
+- **Signature before execution, on both paths.** Verification stays in the service even
+  for the *prompted* path, because an unelevated process could have the file substituted
+  underneath it between check and launch.
+- **Strictly newer only.** A silent downgrade is how a build with a known flaw gets put
+  back on a machine that had already moved past it.
+- **Opt-in, stored in `%ProgramData%`**, so an unprivileged user cannot enable unattended
+  LocalSystem installs for the whole machine.
+
+Every rule that could let the wrong thing be installed is a pure function in
+`of_service::update::decide`, tested over downgrades, unparseable versions, plaintext
+URLs, absent signatures and prerelease ordering. The update decision is not something to
+leave untestable inside a network call — the same lesson as the takeover guard.
+
+**With no signing key, nothing installs.** `PUBLIC_KEY` is empty until releases are
+actually signed, `verifiable` reports `false`, and both paths refuse. Refusing loudly is
+the right posture for an unsigned project, and the interface says so rather than silently
+doing nothing. **Generating a key and signing releases is the remaining work** before
+either path does anything on a user's machine.
+
+**Prompted is still `ShellExecuteW`, not `CreateProcess`.** Only the former honours the
+installer's manifest and elevates; a plain spawn fails with `ERROR_ELEVATION_REQUIRED`,
+which is a baffling way to discover the difference.
+
+**Handing the fans over needs nothing special**, which is the dividend of the service. The
+installer stops the service, stopping runs the dying breath, the fans return to the
+board's curve, the new service starts and picks them up. Observed across a real upgrade.
+
 ### Auto-update: what is wired, and what must land first
 
 Surveyed 2026-09-22, after the first installer was produced.
@@ -980,6 +1029,11 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   launch an elevated application; it needs a scheduled task with highest privileges, or
   the service host from Open Question 2. Not broken today only because autostart is never
   enabled.
+- **Generate an update signing key and sign releases.** Until then `verifiable` is
+  `false` and neither update path will install anything — which is correct, but it means
+  self-update does not yet work on a user's machine. Needs the key generated, the public
+  half compiled in via `OPENFAN_UPDATE_PUBKEY`, `createUpdaterArtifacts`, and a
+  `latest.json` published at the feed URL.
 - **Move the takeover sequence into a library crate and test it.** It currently lives in
   the `takeover` example, where `cargo test` never runs its assertions — so the guard that
   refuses to restore firmware control under a live controller has no coverage, and was
