@@ -15,12 +15,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod presets;
+
 use of_core::Graph;
 use serde::{Deserialize, Serialize};
 
 /// Schema version of profiles written by this build. Bump on every breaking change and
 /// add the corresponding step to [`migrate`].
 pub const CURRENT_SCHEMA: u32 = 1;
+
+pub use presets::{ChannelSummary, HardwareSummary, Preset, SensorSummary, presets};
 
 /// A saved fan-control profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
