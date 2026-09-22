@@ -162,6 +162,17 @@ pub fn download_verified(release: &Release) -> anyhow::Result<PathBuf> {
     key.verify(&bytes, &signature, false)
         .map_err(|e| anyhow!("the downloaded installer failed signature verification: {e}"))?;
 
+    // The signature proves the *bytes* are ours. It does not, on its own, prove they are
+    // the version the feed claimed — and the feed is a plain JSON file whoever serves it
+    // controls. Checking the signed trusted comment is what stops a tampered or replayed
+    // manifest pairing a new version number with an older, genuinely signed installer.
+    if !keys::version_matches(signature.trusted_comment(), &release.version) {
+        bail!(
+            "the installer is correctly signed but vouches for a different version than              the update feed announced ({}). Refusing it: this is what a tampered or              replayed feed looks like.",
+            release.version
+        );
+    }
+
     let path = std::env::temp_dir().join(format!("OpenFan-{}-setup.exe", release.version));
     std::fs::write(&path, &bytes).context("writing the verified installer")?;
     Ok(path)

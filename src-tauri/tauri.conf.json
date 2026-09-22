@@ -47,7 +47,6 @@
         "installerHooks": "installer-hooks.nsi",
         "installMode": "perMachine"
       }
-    },
-    "createUpdaterArtifacts": true
+    }
   }
 }

@@ -80,6 +80,31 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run tauri build
 
+      - name: Sign the installer
+        # Signed explicitly rather than through `createUpdaterArtifacts`, because that
+        # requires a `plugins.updater` config for a plugin we deliberately do not use —
+        # the service does the updating, and verifies with its own compiled-in key.
+        #
+        # `--app-version` binds the version into the signature's *trusted* comment, which
+        # is covered by the signature. The service checks it, which is what stops a
+        # tampered feed announcing a new version while serving an older signed installer.
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          shopt -s nullglob
+          installers=(target/release/bundle/nsis/*-setup.exe)
+          if [ ${#installers[@]} -eq 0 ]; then
+            echo "::error::no installer was produced to sign"
+            exit 1
+          fi
+          for installer in "${installers[@]}"; do
+            echo "signing $installer as $version"
+            bun run tauri signer sign --app-version "$version" "$installer"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: openfan-${{ matrix.os }}

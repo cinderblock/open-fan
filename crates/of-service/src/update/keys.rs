@@ -108,3 +108,81 @@ mod tests {
         }
     }
 }
+
+/// Whether a signature's trusted comment vouches for this exact version.
+///
+/// Closes a hole that signature verification alone does not: the feed is a plain JSON
+/// file, so whoever serves it chooses the version string. Without this, an attacker who
+/// can tamper with the feed — or merely replay an old one — can announce `9.9.9` while
+/// serving a genuinely signed *older* installer. The signature checks out, the version
+/// comparison passes, and the machine is quietly rolled back to a build whose flaws are
+/// already known.
+///
+/// `tauri signer sign --app-version` writes the version into the **trusted** comment,
+/// which is covered by the signature and therefore cannot be edited without invalidating
+/// it. So the manifest's claim is checked against the signed one.
+///
+/// A signature with no version in its comment is rejected rather than waved through:
+/// treating "no claim" as "any claim" would make the check trivially bypassable by
+/// stripping it.
+pub fn version_matches(trusted_comment: &str, expected: &str) -> bool {
+    let wanted = expected.trim().trim_start_matches('v');
+
+    trusted_comment
+        .split_whitespace()
+        .filter_map(|field| field.strip_prefix("version:"))
+        .any(|found| found.trim().trim_start_matches('v') == wanted)
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn a_comment_vouching_for_this_version_matches() {
+        assert!(version_matches(
+            "timestamp:1758000000\tfile:OpenFan_0.2.0_x64-setup.exe\tversion:0.2.0",
+            "0.2.0"
+        ));
+        // Either side may carry a leading v.
+        assert!(version_matches("version:v1.2.3", "1.2.3"));
+        assert!(version_matches("version:1.2.3", "v1.2.3"));
+    }
+
+    #[test]
+    fn a_comment_vouching_for_a_different_version_is_refused() {
+        // The attack: a tampered feed announcing 9.9.9 while serving a validly signed
+        // older installer. The signature verifies; this is what catches it.
+        assert!(!version_matches(
+            "timestamp:1 file:OpenFan_0.1.0_x64-setup.exe version:0.1.0",
+            "9.9.9"
+        ));
+    }
+
+    #[test]
+    fn a_comment_with_no_version_is_refused_rather_than_trusted() {
+        // "No claim" must not mean "any claim", or the check is bypassed by removing it.
+        assert!(!version_matches(
+            "timestamp:1758000000 file:setup.exe",
+            "0.2.0"
+        ));
+        assert!(!version_matches("", "0.2.0"));
+    }
+
+    #[test]
+    fn a_version_that_merely_contains_the_expected_one_does_not_match() {
+        // 0.2.0 must not be satisfied by 0.2.01 or 10.2.0.
+        assert!(!version_matches("version:0.2.01", "0.2.0"));
+        assert!(!version_matches("version:10.2.0", "0.2.0"));
+    }
+
+    #[test]
+    fn the_filename_is_not_mistaken_for_the_version() {
+        // The file field routinely contains the version as a substring. Only the
+        // `version:` field counts.
+        assert!(!version_matches(
+            "file:OpenFan_9.9.9_x64-setup.exe",
+            "9.9.9"
+        ));
+    }
+}
