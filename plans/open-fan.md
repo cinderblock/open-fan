@@ -760,6 +760,55 @@ have caught it; verifying that the edit landed would have. Two follow-ups:
   AIO pump deliberately held at 23 % which jumped to 100 %. A takeover that changes a
   user's fan behaviour must say so *before* acting, not after.
 
+### Auto-update: what is wired, and what must land first
+
+Surveyed 2026-09-22, after the first installer was produced.
+
+**Nothing is wired today.** No `tauri-plugin-updater` dependency, no
+`bundle.createUpdaterArtifacts`, no `plugins.updater` public key or endpoints, and no
+`latest.json` published anywhere. The release workflow *does* already pass
+`TAURI_SIGNING_PRIVATE_KEY` and its password, so the intent was there; nothing consumes
+them yet. The mechanical work is small: generate a keypair, set
+`createUpdaterArtifacts: true`, add the plugin and an endpoint, publish `latest.json`.
+
+**But the mechanical work is not the blocker.** Two things must land first, and both are
+safety rather than packaging.
+
+1. **The controlled handoff does not exist.** The architecture section already specifies
+   it: *apply failsafe → release hardware → swap binary → restart → reacquire*. Today an
+   update would replace the binary while OpenFan may be holding PWM channels in manual
+   mode. Whether the dying breath runs at all depends on how the updater terminates the
+   app, which is **unverified** — `EngineHandle`'s `Drop` covers a normal exit and a panic
+   unwind, and covers nothing about a process the updater kills. Get this wrong and an
+   update leaves fans frozen at whatever duty they had, with nothing responding to
+   temperature, until the new version starts. That is Phase 4's dying breath and external
+   watchdog, and auto-update must come after it, not alongside.
+
+2. **Elevation changes the update path.** The app now requires administrator. Tauri's NSIS
+   updater spawns the installer, which will also need it; an already-elevated app should
+   pass that on without a second prompt, but *should* is not *does* and it needs testing.
+   `installMode` matters here too — a per-machine install into Program Files needs
+   elevation to update, a per-user one does not.
+
+**Two adjacent facts worth not confusing.** Tauri's signing (minisign) authenticates the
+*update payload*, and is what stops a malicious update being accepted. **Authenticode** is
+what stops SmartScreen warning on every install and every update, and we have neither.
+They are different problems with different price tags; Open Question 3 is about the
+second one.
+
+**Autostart is incompatible with `requireAdministrator`.** `tauri-plugin-autostart` uses
+the `HKCU\...\Run` key, which Windows will not use to launch an elevated application. The
+plugin is initialised but never enabled, so nothing is broken right now — it will be the
+moment someone turns it on. The fix is a scheduled task registered with *run with highest
+privileges*, which also has to be created by an elevated installer. This is a knock-on of
+requiring administrator and belongs with the service question (Open Question 2): a service
+runs elevated at boot and makes both problems disappear.
+
+**One thing that already works:** the PawnIO module cache lives in
+`%LOCALAPPDATA%\OpenFan\`, outside the install directory, so it survives updates and
+uninstalls. A PawnIO *version* change is a separate matter and first-run already
+distinguishes "installed" from "installed at a version we have tested".
+
 ### Hardware facts about the dev box (`Noook`)
 
 Recorded so a future session does not re-derive them: `Win32_Fan` returns three useless
@@ -796,6 +845,10 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
 
 ## Backlog (captured from the initial brief, not yet scheduled)
 
+- **Autostart cannot work while the app requires administrator.** The Run key will not
+  launch an elevated application; it needs a scheduled task with highest privileges, or
+  the service host from Open Question 2. Not broken today only because autostart is never
+  enabled.
 - **Move the takeover sequence into a library crate and test it.** It currently lives in
   the `takeover` example, where `cargo test` never runs its assertions — so the guard that
   refuses to restore firmware control under a live controller has no coverage, and was
