@@ -28,7 +28,7 @@ use of_hal_pawnio::nct6775::{
 
 /// Banks to capture. Fans and voltages live in bank 4, PWM and temperatures in the low
 /// banks, source selection in bank 6.
-const BANKS: std::ops::Range<u8> = 0..8;
+const BANKS: std::ops::Range<u8> = 0..16;
 
 /// Index that selects the bank for subsequent accesses.
 const BANK_SELECT: u8 = 0x4E;

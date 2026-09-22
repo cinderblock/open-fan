@@ -40,8 +40,90 @@ const BANK_SELECT: u8 = 0x4E;
 /// reading it as one produces a confident, nonsensical RPM.
 pub const REG_FAN: [u16; 7] = [0x4C0, 0x4C2, 0x4C4, 0x4C6, 0x4C8, 0x4CA, 0x4CE];
 
-/// PWM duty, one byte each, 0–255.
+/// PWM duty **readback**, one byte each, 0–255.
+///
+/// Not the same registers you write. See [`REG_PWM_WRITE`].
 pub const REG_PWM: [u16; 7] = [0x001, 0x003, 0x011, 0x013, 0x015, 0x017, 0x019];
+
+/// PWM duty **write** registers, one byte each, 0–255.
+///
+/// Deliberately a separate table from [`REG_PWM`], because they are separate registers
+/// and conflating them is an easy and expensive mistake: a duty written to the readback
+/// address does nothing, and the fan keeps running at whatever the firmware last chose
+/// while we believe we are in control. Verified on hardware — each write register holds
+/// the same value as its readback counterpart.
+pub const REG_PWM_WRITE: [u16; 7] = [0x109, 0x209, 0x309, 0x809, 0x909, 0xA09, 0xB09];
+
+/// Per-channel fan control mode. The mode is the high nibble; the low nibble is a
+/// tolerance setting belonging to the firmware, which must be preserved.
+pub const REG_FAN_MODE: [u16; 7] = [0x102, 0x202, 0x302, 0x802, 0x902, 0xA02, 0xB02];
+
+/// How a channel decides its own duty.
+///
+/// Anything other than [`Manual`](FanMode::Manual) means the chip is running one of its
+/// own control algorithms — that is firmware control, and it is what `release` has to put
+/// back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FanMode {
+    /// The duty register is obeyed directly. What we need to drive a fan.
+    Manual,
+    ThermalCruise,
+    SpeedCruise,
+    SmartFanIii,
+    /// The usual mode for a header left to the BIOS fan curve.
+    SmartFanIv,
+    /// A value this chip family documents no meaning for. Preserved verbatim on restore
+    /// rather than normalised, because we do not know what it does.
+    Unknown(u8),
+}
+
+impl FanMode {
+    /// Whether the chip, not us, is choosing the duty.
+    pub fn is_firmware_controlled(self) -> bool {
+        self != FanMode::Manual
+    }
+}
+
+/// Extract the mode from a fan mode register byte.
+pub fn mode_from_register(raw: u8) -> FanMode {
+    match raw >> 4 {
+        0 => FanMode::Manual,
+        1 => FanMode::ThermalCruise,
+        2 => FanMode::SpeedCruise,
+        3 => FanMode::SmartFanIii,
+        4 => FanMode::SmartFanIv,
+        other => FanMode::Unknown(other),
+    }
+}
+
+/// Put `mode` into a fan mode register byte, **preserving the low nibble**.
+///
+/// The low nibble is the firmware's tolerance setting. Clearing it would change how the
+/// chip behaves after we hand the channel back, which would make `release` a lossy
+/// restore rather than an exact one.
+pub fn mode_into_register(raw: u8, mode: FanMode) -> u8 {
+    let bits = match mode {
+        FanMode::Manual => 0,
+        FanMode::ThermalCruise => 1,
+        FanMode::SpeedCruise => 2,
+        FanMode::SmartFanIii => 3,
+        FanMode::SmartFanIv => 4,
+        FanMode::Unknown(other) => other,
+    };
+    (raw & 0x0F) | (bits << 4)
+}
+
+/// Convert a duty percentage to a register value.
+///
+/// Saturating rather than wrapping: a caller that somehow asks for 300 % gets full speed,
+/// never the 45 that wrapping arithmetic would produce. NaN becomes full speed too — if
+/// we have lost track of what we meant to command, the safe direction is *more* cooling.
+pub fn encode_pwm(percent: f64) -> u8 {
+    if percent.is_nan() {
+        return u8::MAX;
+    }
+    (percent / 100.0 * 255.0).round().clamp(0.0, 255.0) as u8
+}
 
 /// A temperature input and how to read it.
 pub struct TempInput {
@@ -236,6 +318,17 @@ impl Nct6775 {
         Ok((u16::from(high) << 8) | u16::from(low))
     }
 
+    /// Write one 8-bit register.
+    ///
+    /// The only method in this crate that changes hardware state. Everything above it is
+    /// read-only by construction.
+    pub fn write_byte(&self, bus: &Bus<'_>, register: u16, value: u8) -> Result<(), LpcError> {
+        self.set_bank(bus, (register >> 8) as u8)?;
+        bus.pio_outb(self.addr_port(), register as u8)?;
+        bus.pio_outb(self.data_port(), value)?;
+        Ok(())
+    }
+
     fn set_bank(&self, bus: &Bus<'_>, bank: u8) -> Result<(), LpcError> {
         bus.pio_outb(self.addr_port(), BANK_SELECT)?;
         bus.pio_outb(self.data_port(), bank)?;
@@ -338,6 +431,65 @@ mod tests {
         // this as a stride would produce a seventh "fan" reading pure garbage.
         assert_eq!(REG_FAN[6], 0x4CE);
         assert!(!REG_FAN.contains(&0x4CC));
+    }
+
+    #[test]
+    fn the_write_and_readback_pwm_registers_are_not_the_same() {
+        // Conflating them is silent and expensive: a duty written to a readback address
+        // does nothing, the firmware keeps choosing the speed, and we believe we are in
+        // control. Only channels 5 and 6 happen to share an address.
+        assert_ne!(REG_PWM[0], REG_PWM_WRITE[0]);
+        assert_ne!(REG_PWM[1], REG_PWM_WRITE[1]);
+        assert_eq!(REG_PWM_WRITE[0], 0x109);
+    }
+
+    #[test]
+    fn the_firmware_curve_mode_is_recognised() {
+        // 0x40 is what the reference machine's untouched chassis header reads: Smart Fan
+        // IV, the BIOS curve. Reading it as anything else would make us think a
+        // firmware-controlled channel was already ours.
+        assert_eq!(mode_from_register(0x40), FanMode::SmartFanIv);
+        assert!(mode_from_register(0x40).is_firmware_controlled());
+
+        // 0x00 is a channel already in manual, which on that machine means another
+        // application put it there.
+        assert_eq!(mode_from_register(0x00), FanMode::Manual);
+        assert!(!mode_from_register(0x00).is_firmware_controlled());
+    }
+
+    #[test]
+    fn switching_to_manual_preserves_the_firmwares_tolerance_nibble() {
+        // The low nibble belongs to the firmware. Clearing it would change how the chip
+        // behaves after we hand the channel back, making release a lossy restore.
+        assert_eq!(mode_into_register(0x4A, FanMode::Manual), 0x0A);
+        assert_eq!(mode_into_register(0x40, FanMode::Manual), 0x00);
+    }
+
+    #[test]
+    fn every_mode_survives_a_round_trip_through_the_register() {
+        // This is the property `release` depends on: whatever we found, we can put back
+        // byte for byte. Includes the undocumented values, which are preserved rather
+        // than normalised because we do not know what they do.
+        for raw in 0..=u8::MAX {
+            let restored = mode_into_register(raw, mode_from_register(raw));
+            assert_eq!(restored, raw, "round trip lost information for {raw:#04X}");
+        }
+    }
+
+    #[test]
+    fn a_duty_that_makes_no_sense_errs_towards_more_cooling() {
+        // Wrapping arithmetic would turn 300 % into 45. NaN means we have lost track of
+        // what we meant to command, and the safe direction is always more airflow.
+        assert_eq!(encode_pwm(300.0), 255);
+        assert_eq!(encode_pwm(f64::NAN), 255);
+        assert_eq!(encode_pwm(-50.0), 0);
+    }
+
+    #[test]
+    fn duty_encoding_round_trips_through_the_decoder() {
+        for raw in 0..=u8::MAX {
+            assert_eq!(encode_pwm(decode_pwm(raw)), raw, "lost {raw}");
+        }
     }
 
     #[test]
