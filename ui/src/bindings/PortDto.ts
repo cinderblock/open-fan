@@ -3,8 +3,11 @@ import type { Quantity } from "./Quantity";
 
 /**
  * One typed port, as the editor sees it.
+ *
+ * `quantity` is `None` for a generic port that nothing has decided yet. The editor
+ * draws those neutral, and they lock to a colour once a connection resolves them.
  */
-export type PortDto = { key: string, label: string, quantity: Quantity, 
+export type PortDto = { key: string, label: string, quantity: Quantity | null, 
 /**
  * A required input left unconnected makes the graph invalid.
  */

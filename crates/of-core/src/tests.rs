@@ -18,7 +18,6 @@ impl TickExt for CompiledGraph {
 
 fn curve(points: &[(f64, f64)]) -> NodeKind {
     NodeKind::Curve {
-        input: Quantity::Temperature,
         points: points
             .iter()
             .map(|&(x, y)| node::CurvePoint { x, y })
@@ -173,7 +172,6 @@ fn a_cycle_is_rejected() {
     g.insert(
         "a",
         NodeKind::Clamp {
-            quantity: Quantity::Duty,
             min: 0.0,
             max: 100.0,
         },
@@ -181,7 +179,6 @@ fn a_cycle_is_rejected() {
     g.insert(
         "b",
         NodeKind::Clamp {
-            quantity: Quantity::Duty,
             min: 0.0,
             max: 100.0,
         },
@@ -218,24 +215,11 @@ fn an_unconnected_fan_input_is_a_validation_error() {
 #[test]
 fn a_plain_input_rejects_two_producers_but_a_mixer_accepts_many() {
     let mut g = Graph::default();
-    g.insert(
-        "c1",
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 10.0,
-        },
-    );
-    g.insert(
-        "c2",
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 20.0,
-        },
-    );
+    g.insert("c1", NodeKind::Constant { value: 10.0 });
+    g.insert("c2", NodeKind::Constant { value: 20.0 });
     g.insert(
         "clamp",
         NodeKind::Clamp {
-            quantity: Quantity::Duty,
             min: 0.0,
             max: 100.0,
         },
@@ -252,27 +236,9 @@ fn a_plain_input_rejects_two_producers_but_a_mixer_accepts_many() {
     );
 
     let mut g = Graph::default();
-    g.insert(
-        "c1",
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 10.0,
-        },
-    );
-    g.insert(
-        "c2",
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 20.0,
-        },
-    );
-    g.insert(
-        "mix",
-        NodeKind::Mix {
-            quantity: Quantity::Duty,
-            mode: MixMode::Max,
-        },
-    );
+    g.insert("c1", NodeKind::Constant { value: 10.0 });
+    g.insert("c2", NodeKind::Constant { value: 20.0 });
+    g.insert("mix", NodeKind::Mix { mode: MixMode::Max });
     g.insert(
         "fan",
         NodeKind::FanOutput {
@@ -373,7 +339,6 @@ fn one_dead_sensor_poisons_a_mix_instead_of_being_averaged_away() {
     g.insert(
         "mix",
         NodeKind::Mix {
-            quantity: Quantity::Temperature,
             mode: MixMode::Average,
         },
     );
@@ -412,7 +377,6 @@ fn a_clamp_cannot_disguise_a_broken_reading() {
     g.insert(
         "clamp",
         NodeKind::Clamp {
-            quantity: Quantity::Temperature,
             min: 20.0,
             max: 90.0,
         },
@@ -498,7 +462,6 @@ fn rate_limit_adopts_its_first_value_then_ramps() {
     g.insert(
         "limit",
         NodeKind::RateLimit {
-            quantity: Quantity::Duty,
             max_delta_per_second: 50.0,
         },
     );
@@ -532,17 +495,10 @@ fn stale_node_state_is_dropped_when_the_graph_changes() {
     g.insert(
         "limit",
         NodeKind::RateLimit {
-            quantity: Quantity::Duty,
             max_delta_per_second: 50.0,
         },
     );
-    g.insert(
-        "c",
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 50.0,
-        },
-    );
+    g.insert("c", NodeKind::Constant { value: 50.0 });
     g.connect(PortRef::new("c", "out"), PortRef::new("limit", "in"));
 
     let compiled = g.validate().unwrap();

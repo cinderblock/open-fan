@@ -44,8 +44,22 @@ export const QUANTITY_STYLE: Record<Quantity, QuantityStyle> = {
 
 export const ALL_QUANTITIES = Object.keys(QUANTITY_STYLE) as Quantity[];
 
-export function styleOf(q: Quantity): QuantityStyle {
-  return QUANTITY_STYLE[q];
+/**
+ * How an undecided port is drawn.
+ *
+ * Generic nodes carry whatever they are given, so until a connection decides them there
+ * is no honest colour to use. White reads as "anything", and the port locks to a real
+ * colour the moment inference resolves it.
+ */
+export const GENERIC_STYLE: QuantityStyle = {
+  label: 'Any type',
+  symbol: '',
+  color: '#e6e9ee',
+};
+
+/** The style for a port type, falling back to neutral when nothing has decided it. */
+export function styleOf(q: Quantity | null | undefined): QuantityStyle {
+  return q ? QUANTITY_STYLE[q] : GENERIC_STYLE;
 }
 
 /**
@@ -54,8 +68,17 @@ export function styleOf(q: Quantity): QuantityStyle {
  * Exact equality, with no implicit coercion — including between quantities that share a
  * unit. `load` and `duty` are both percentages and still do not interchange, because
  * "the CPU is 70 % busy" and "drive this fan at 70 %" are different claims.
+ *
+ * `null` means the port is generic and nothing has decided it yet, so it accepts
+ * anything: connecting it is precisely what decides it. The backend re-runs full
+ * inference on apply and is the authority — this check exists so an obviously illegal
+ * edge cannot be drawn in the first place.
  */
-export function connects(source: Quantity, sink: Quantity): boolean {
+export function connects(
+  source: Quantity | null | undefined,
+  sink: Quantity | null | undefined,
+): boolean {
+  if (!source || !sink) return true;
   return source === sink;
 }
 
@@ -67,7 +90,7 @@ export function rejectionReason(source: Quantity, sink: Quantity): string {
 }
 
 /** Format a value for a readout, e.g. `54.3 °C`. */
-export function formatValue(q: Quantity, scalar: number): string {
+export function formatValue(q: Quantity | null | undefined, scalar: number): string {
   if (!Number.isFinite(scalar)) return '—';
   const { symbol } = styleOf(q);
   const rounded = Math.abs(scalar) >= 100 ? scalar.toFixed(0) : scalar.toFixed(1);

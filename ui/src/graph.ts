@@ -9,6 +9,8 @@
 import type { Edge as FlowEdge } from '@xyflow/react';
 
 import type { Graph, NodeDescriptor, NodeInstance, PortDto } from './api';
+import type { PortTypeDto } from './bindings/PortTypeDto';
+import type { Quantity } from './bindings/Quantity';
 import type { TypedNodeType } from './nodes/TypedNode';
 
 /** The serde tag identifying a node's kind. */
@@ -16,39 +18,46 @@ export function kindTag(node: NodeInstance): string {
   return (node.kind as { kind: string }).kind;
 }
 
-/** Ports for a node, looked up from the catalogue. */
+/**
+ * The resolved type of every port, keyed `nodeId.port`.
+ *
+ * `null` means the port is generic and inference has not decided it. Computed by the
+ * backend so the editor does not carry a second implementation of unification.
+ */
+export type PortTypeMap = Map<string, Quantity | null>;
+
+export function portKey(nodeId: string, port: string): string {
+  return `${nodeId}.${port}`;
+}
+
+export function toPortTypeMap(list: PortTypeDto[]): PortTypeMap {
+  return new Map(list.map((t) => [portKey(t.nodeId, t.port), t.quantity]));
+}
+
+/**
+ * Ports for a node: the shape comes from the catalogue, the types from inference.
+ *
+ * A descriptor's own port types are those of its *template*, which for a generic node
+ * means "undecided". Overlaying the resolved types is what makes a Hold show degrees
+ * once it is wired to a temperature.
+ */
 export function portsOf(
+  nodeId: string,
   node: NodeInstance,
   catalogue: NodeDescriptor[],
+  types: PortTypeMap,
 ): { inputs: PortDto[]; outputs: PortDto[] } {
-  const tag = kindTag(node);
-  const descriptor = catalogue.find((d) => d.kind === tag);
+  const descriptor = catalogue.find((d) => d.kind === kindTag(node));
   if (!descriptor) return { inputs: [], outputs: [] };
 
-  // The catalogue's descriptor is built from a *template*, whose quantity parameters may
-  // differ from this instance's. Re-derive the quantities from the instance so a Mix set
-  // to Temperature does not render Duty-coloured ports.
-  const params = node.kind as unknown as Record<string, unknown>;
-  const retype = (port: PortDto): PortDto => {
-    const candidate =
-      port.key === 'out' && typeof params.to === 'string'
-        ? params.to
-        : port.key === 'in' && typeof params.from === 'string'
-          ? params.from
-          : typeof params.quantity === 'string'
-            ? params.quantity
-            : typeof params.input === 'string' && port.key === 'in'
-              ? params.input
-              : undefined;
-    return candidate ? { ...port, quantity: candidate as PortDto['quantity'] } : port;
+  const resolve = (port: PortDto): PortDto => {
+    const key = portKey(nodeId, port.key);
+    return types.has(key) ? { ...port, quantity: types.get(key) ?? null } : port;
   };
 
-  // A Curve always emits a duty and a Comparator always emits a boolean, whatever their
-  // input is; only re-type ports the instance actually parameterises.
-  const fixedOutput = tag === 'curve' || tag === 'comparator' || tag === 'pid';
   return {
-    inputs: descriptor.inputs.map(retype),
-    outputs: fixedOutput ? descriptor.outputs : descriptor.outputs.map(retype),
+    inputs: descriptor.inputs.map(resolve),
+    outputs: descriptor.outputs.map(resolve),
   };
 }
 
@@ -68,11 +77,15 @@ function subtitleOf(node: NodeInstance, descriptor?: NodeDescriptor): string {
  * editor, because rebuilding from the document resets every node to its *stored* position
  * and would throw away drags that have not been applied yet.
  */
-export function toFlowNodes(graph: Graph, catalogue: NodeDescriptor[]): TypedNodeType[] {
+export function toFlowNodes(
+  graph: Graph,
+  catalogue: NodeDescriptor[],
+  types: PortTypeMap,
+): TypedNodeType[] {
   return Object.entries(graph.nodes).map(([id, node]) => {
     const tag = kindTag(node);
     const descriptor = catalogue.find((d) => d.kind === tag);
-    const { inputs, outputs } = portsOf(node, catalogue);
+    const { inputs, outputs } = portsOf(id, node, catalogue, types);
 
     return {
       id,

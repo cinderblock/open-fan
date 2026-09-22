@@ -583,3 +583,23 @@ body {
   opacity: 0.3;
   cursor: default;
 }
+
+/* --- Generic (undecided) ports -------------------------------------------------- */
+
+/* A generic port carries whatever it is given. It is drawn hollow rather than filled,
+   so "undecided" is distinguishable from a real pale type at a glance — and, like every
+   other port, it is not distinguished by colour alone: the label reads "any". */
+.port-handle--generic {
+  background: var(--panel) !important;
+  border-style: dashed;
+}
+
+.port-type--generic {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.legend__swatch--generic {
+  background: var(--panel);
+  border: 2px dashed var(--text);
+}

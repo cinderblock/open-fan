@@ -14,6 +14,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Graph } from './bindings/Graph';
 import type { HardwareInventory } from './bindings/HardwareInventory';
 import type { NodeDescriptor } from './bindings/NodeDescriptor';
+import type { PortTypeDto } from './bindings/PortTypeDto';
 import type { SnapshotDto } from './bindings/SnapshotDto';
 import type { ValidationError } from './bindings/ValidationError';
 
@@ -21,6 +22,7 @@ export type { Graph, HardwareInventory, NodeDescriptor, SnapshotDto, ValidationE
 export type { NodeInstance } from './bindings/NodeInstance';
 export type { NodeKind } from './bindings/NodeKind';
 export type { PortDto } from './bindings/PortDto';
+export type { PortTypeDto } from './bindings/PortTypeDto';
 export type { WireValue } from './bindings/WireValue';
 
 /** True when running inside the Tauri shell rather than a bare browser. */
@@ -31,6 +33,15 @@ export const inventory = () => invoke<HardwareInventory>('inventory');
 export const getGraph = () => invoke<Graph>('get_graph');
 export const snapshot = () => invoke<SnapshotDto>('snapshot');
 export const rescan = () => invoke<void>('rescan');
+
+/**
+ * Infer the type of every port in a candidate graph.
+ *
+ * Called on each structural edit so generic ports can lock to a colour as soon as a
+ * connection decides them. Unification lives in the backend; the editor only renders
+ * the answer.
+ */
+export const resolveTypes = (graph: Graph) => invoke<PortTypeDto[]>('resolve_types', { graph });
 
 /** Outcome of an attempted graph install. */
 export type ApplyResult = { ok: true } | { ok: false; errors: ValidationError[] };

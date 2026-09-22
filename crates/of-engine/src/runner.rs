@@ -285,7 +285,6 @@ mod tests {
         g.insert(
             "curve",
             NodeKind::Curve {
-                input: Quantity::Temperature,
                 points: vec![
                     CurvePoint { x: 30.0, y: 20.0 },
                     CurvePoint { x: 80.0, y: 100.0 },

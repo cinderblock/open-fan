@@ -43,10 +43,13 @@ macro_rules! dto {
 
 dto! {
     /// One typed port, as the editor sees it.
+    ///
+    /// `quantity` is `None` for a generic port that nothing has decided yet. The editor
+    /// draws those neutral, and they lock to a colour once a connection resolves them.
     pub struct PortDto {
         pub key: String,
         pub label: String,
-        pub quantity: Quantity,
+        pub quantity: Option<Quantity>,
         /// A required input left unconnected makes the graph invalid.
         pub required: bool,
         /// A variadic input accepts any number of incoming connections.
@@ -163,6 +166,34 @@ dto! {
 }
 
 dto! {
+    /// The inferred type of one port.
+    pub struct PortTypeDto {
+        pub node_id: String,
+        pub port: String,
+        /// `None` when the port is generic and nothing has decided it yet.
+        pub quantity: Option<Quantity>,
+    }
+}
+
+/// Infer the type of every port in a graph.
+///
+/// The editor calls this on each edit so it can colour ports as their types resolve,
+/// without duplicating unification in the frontend. Inference is cheap, pure and does
+/// not require the graph to be valid — a half-built graph is exactly when this is most
+/// useful.
+pub fn resolve_types(graph: &Graph) -> Vec<PortTypeDto> {
+    of_core::infer::infer(graph)
+        .0
+        .into_iter()
+        .map(|(port, quantity)| PortTypeDto {
+            node_id: port.node.0,
+            port: port.port,
+            quantity,
+        })
+        .collect()
+}
+
+dto! {
     /// A rejected graph edit.
     pub struct ValidationError {
         /// Human-readable, already explaining what to do about it.
@@ -202,7 +233,7 @@ pub fn port_dto(spec: &of_core::PortSpec) -> PortDto {
     PortDto {
         key: spec.key.to_owned(),
         label: spec.label.to_owned(),
-        quantity: spec.quantity,
+        quantity: spec.ty.concrete(),
         required: spec.required,
         variadic: spec.variadic,
     }
@@ -251,16 +282,12 @@ pub fn catalogue() -> Vec<NodeDescriptor> {
         descriptor(
             Source,
             "Emits a fixed value. Also backs a manual slider.",
-            NodeKind::Constant {
-                quantity: Q::Duty,
-                value: 50.0,
-            },
+            NodeKind::Constant { value: 50.0 },
         ),
         descriptor(
             Transform,
-            "Maps a temperature onto a duty along a transfer curve.",
+            "Maps any input onto a duty along a transfer curve.",
             NodeKind::Curve {
-                input: Q::Temperature,
                 points: vec![
                     CurvePoint { x: 30.0, y: 20.0 },
                     CurvePoint { x: 80.0, y: 100.0 },
@@ -269,17 +296,13 @@ pub fn catalogue() -> Vec<NodeDescriptor> {
         ),
         descriptor(
             Transform,
-            "Combines several inputs of the same type into one.",
-            NodeKind::Mix {
-                quantity: Q::Temperature,
-                mode: MixMode::Max,
-            },
+            "Combines several inputs of the same type into one. The type is inferred.",
+            NodeKind::Mix { mode: MixMode::Max },
         ),
         descriptor(
             Transform,
             "Constrains a value to a range.",
             NodeKind::Clamp {
-                quantity: Q::Duty,
                 min: 20.0,
                 max: 100.0,
             },
@@ -287,18 +310,12 @@ pub fn catalogue() -> Vec<NodeDescriptor> {
         descriptor(
             Transform,
             "Adds a constant.",
-            NodeKind::Offset {
-                quantity: Q::Temperature,
-                delta: 0.0,
-            },
+            NodeKind::Offset { delta: 0.0 },
         ),
         descriptor(
             Transform,
             "Multiplies by a constant.",
-            NodeKind::Scale {
-                quantity: Q::Duty,
-                factor: 1.0,
-            },
+            NodeKind::Scale { factor: 1.0 },
         ),
         descriptor(
             Transform,
@@ -312,54 +329,38 @@ pub fn catalogue() -> Vec<NodeDescriptor> {
             Stateful,
             "Limits how fast a value may change, per second.",
             NodeKind::RateLimit {
-                quantity: Q::Duty,
                 max_delta_per_second: 10.0,
             },
         ),
         descriptor(
             Stateful,
             "Smooths a signal with a time constant in seconds.",
-            NodeKind::LowPass {
-                quantity: Q::Temperature,
-                tau_seconds: 5.0,
-            },
+            NodeKind::LowPass { tau_seconds: 5.0 },
         ),
         descriptor(
             Stateful,
             "Averages the most recent samples.",
-            NodeKind::MovingAverage {
-                quantity: Q::Temperature,
-                samples: 10,
-            },
+            NodeKind::MovingAverage { samples: 10 },
         ),
         descriptor(
             Stateful,
             "Holds its output until the input moves outside a band. Stops fans twitching at sensor noise.",
-            NodeKind::Hold {
-                quantity: Q::Temperature,
-                band: 1.0,
-            },
+            NodeKind::Hold { band: 1.0 },
         ),
         descriptor(
             Logic,
             "Tests a value against a threshold, with a deadband so it cannot chatter.",
             NodeKind::Comparator {
-                quantity: Q::Temperature,
                 threshold: 70.0,
                 deadband: 4.0,
                 direction: of_core::Compare::Above,
             },
         ),
-        descriptor(
-            Logic,
-            "Chooses between two inputs.",
-            NodeKind::Select { quantity: Q::Duty },
-        ),
+        descriptor(Logic, "Chooses between two inputs.", NodeKind::Select),
         descriptor(
             Stateful,
             "Holds a temperature at a setpoint. The integral is bounded so it cannot wind up.",
             NodeKind::Pid {
-                quantity: Q::Temperature,
                 setpoint: 65.0,
                 kp: 4.0,
                 ki: 0.2,

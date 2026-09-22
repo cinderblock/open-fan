@@ -44,12 +44,21 @@ function PortRow({
         type={isInput ? 'target' : 'source'}
         position={isInput ? Position.Left : Position.Right}
         id={port.key}
-        className={`port-handle${port.variadic ? ' port-handle--variadic' : ''}`}
+        className={[
+          'port-handle',
+          port.variadic ? 'port-handle--variadic' : '',
+          port.quantity ? '' : 'port-handle--generic',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         style={{ background: style.color, borderColor: style.color }}
       />
       <span className="port-label">{port.label}</span>
-      <span className="port-type" style={{ color: style.color }}>
-        {style.symbol || style.label}
+      <span
+        className={`port-type${port.quantity ? '' : ' port-type--generic'}`}
+        style={{ color: style.color }}
+      >
+        {port.quantity ? style.symbol || style.label : 'any'}
       </span>
       {readout !== undefined && (
         <span className="port-readout">{formatValue(port.quantity, readout)}</span>

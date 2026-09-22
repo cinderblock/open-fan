@@ -10,8 +10,8 @@
 
 use of_engine::EngineHandle;
 use of_ipc::{
-    ChannelDto, Graph, HardwareInventory, NodeDescriptor, SensorDto, SnapshotDto, ValidationError,
-    WireValue, catalogue,
+    ChannelDto, Graph, HardwareInventory, NodeDescriptor, PortTypeDto, SensorDto, SnapshotDto,
+    ValidationError, WireValue, catalogue,
 };
 
 use crate::state::AppState;
@@ -124,6 +124,16 @@ pub fn set_graph(
     })
 }
 
+/// Infer the type of every port in a candidate graph.
+///
+/// Called by the editor on each edit so ports can be coloured as their types resolve.
+/// Pure and cheap, and it does not require the graph to be valid — a half-built graph is
+/// exactly when this is most useful.
+#[tauri::command]
+pub fn resolve_types(graph: Graph) -> Vec<PortTypeDto> {
+    of_ipc::resolve_types(&graph)
+}
+
 /// Re-enumerate the backend's sensors and channels.
 #[tauri::command]
 pub fn rescan(state: tauri::State<'_, AppState>) {
@@ -171,6 +181,8 @@ fn offending_node(error: &of_core::GraphError) -> Option<String> {
         E::NotAnOutput { edge_from } => edge_from.node.0.clone(),
         E::NotAnInput { edge_to } => edge_to.node.0.clone(),
         E::TypeMismatch { to, .. } => to.node.0.clone(),
+        // A conflict is attributed to the node that cannot satisfy both sides.
+        E::TypeConflict { node, .. } => node.0.clone(),
         E::InputOverSubscribed(port) | E::MissingInput(port) => port.node.0.clone(),
     })
 }
@@ -225,7 +237,6 @@ mod tests {
         g.insert(
             "curve",
             NodeKind::Curve {
-                input: Quantity::Temperature,
                 points: vec![
                     CurvePoint { x: 0.0, y: 40.0 },
                     CurvePoint { x: 100.0, y: 100.0 },

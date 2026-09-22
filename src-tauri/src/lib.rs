@@ -117,6 +117,7 @@ pub fn run() {
             commands::get_graph,
             commands::set_graph,
             commands::rescan,
+            commands::resolve_types,
             commands::snapshot,
         ])
         .run(tauri::generate_context!())

@@ -353,7 +353,6 @@ mod tests {
         g.insert(
             "curve",
             NodeKind::Curve {
-                input: Quantity::Temperature,
                 points: vec![
                     of_core::CurvePoint { x: 30.0, y: 0.0 },
                     of_core::CurvePoint { x: 80.0, y: 100.0 },
@@ -550,7 +549,6 @@ mod tests {
         g.insert(
             "curve",
             NodeKind::Curve {
-                input: Quantity::Temperature,
                 points: vec![
                     of_core::CurvePoint { x: 30.0, y: 0.0 },
                     of_core::CurvePoint { x: 80.0, y: 100.0 },

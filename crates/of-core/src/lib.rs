@@ -12,6 +12,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod infer;
 pub mod node;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use of_units::{Quantity, Value};
 use serde::{Deserialize, Serialize};
 
-pub use node::{Compare, CurvePoint, MixMode, NodeKind, NodeSpec, PortSpec, TickInput};
+pub use infer::PortTypes;
+pub use node::{Compare, CurvePoint, MixMode, NodeKind, NodeSpec, PortSpec, PortType, TickInput};
 
 /// Identifier for a node instance. Strings, because they round-trip to the editor and
 /// survive being hand-edited in a saved profile.
@@ -163,6 +165,15 @@ pub enum GraphError {
     #[error("required input {0} is not connected")]
     MissingInput(PortRef),
 
+    #[error(
+        "node {node} would have to carry both {a} and {b}: its connections disagree about          the type flowing through it"
+    )]
+    TypeConflict {
+        node: NodeId,
+        a: Quantity,
+        b: Quantity,
+    },
+
     #[error("the graph contains a cycle through node {0}; use a delay or filter node instead")]
     Cycle(NodeId),
 }
@@ -243,7 +254,7 @@ impl Graph {
                 continue;
             }
 
-            let Some((from_spec, from_dir)) = self.port_spec(&edge.from) else {
+            let Some((_, from_dir)) = self.port_spec(&edge.from) else {
                 errors.push(GraphError::UnknownPort(
                     edge.from.node.clone(),
                     edge.from.port.clone(),
@@ -271,17 +282,6 @@ impl Graph {
                 continue;
             }
 
-            // The type rule, delegated to of-units so backend and editor cannot diverge.
-            if of_units::check_connection(from_spec.quantity, to_spec.quantity).is_err() {
-                errors.push(GraphError::TypeMismatch {
-                    from: edge.from.clone(),
-                    to: edge.to.clone(),
-                    source_ty: from_spec.quantity,
-                    sink_ty: to_spec.quantity,
-                });
-                continue;
-            }
-
             // A variadic input accepts many producers; a plain input accepts exactly one.
             if !to_spec.variadic && driven.insert(edge.to.clone(), edge.from.clone()).is_some() {
                 errors.push(GraphError::InputOverSubscribed(edge.to.clone()));
@@ -301,12 +301,16 @@ impl Graph {
             }
         }
 
+        let (types, type_errors) = infer::infer(self);
+        errors.extend(type_errors);
+
         match self.topological_order() {
             Ok(order) => {
                 if errors.is_empty() {
                     Ok(CompiledGraph {
                         graph: self.clone(),
                         order,
+                        types,
                     })
                 } else {
                     Err(errors)
@@ -353,6 +357,7 @@ enum Direction {
 pub struct CompiledGraph {
     graph: Graph,
     order: Vec<NodeId>,
+    types: PortTypes,
 }
 
 /// Sensor readings for one tick, keyed by the sensor id a [`NodeKind::Sensor`] names.
@@ -380,6 +385,11 @@ impl CompiledGraph {
 
     pub fn order(&self) -> &[NodeId] {
         &self.order
+    }
+
+    /// The inferred type of every port. `None` means still generic.
+    pub fn types(&self) -> &PortTypes {
+        &self.types
     }
 
     /// Evaluate one tick against sensor readings and an elapsed time.
@@ -424,7 +434,14 @@ impl CompiledGraph {
             }
 
             let node_state = state.entry(id.clone());
-            let produced = instance.kind.eval(&inputs, ctx, node_state);
+            // Nodes with no input take their output type from inference; the rest
+            // carry their input's type through.
+            let out_type = self
+                .types
+                .get(&PortRef::new(id.clone(), "out"))
+                .copied()
+                .flatten();
+            let produced = instance.kind.eval(&inputs, ctx, node_state, out_type);
 
             for (key, value) in produced.outputs {
                 let r = PortRef::new(id.clone(), key);
@@ -475,3 +492,6 @@ mod tests;
 
 #[cfg(test)]
 mod node_tests;
+
+#[cfg(test)]
+mod infer_tests;

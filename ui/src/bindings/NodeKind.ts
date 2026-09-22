@@ -6,8 +6,11 @@ import type { Quantity } from "./Quantity";
 
 /**
  * A node's kind and its parameters.
+ *
+ * Note how few variants carry a `quantity`: the generic ones infer it, so there is no
+ * type to set and no way to set one inconsistently with what it is wired to.
  */
-export type NodeKind = { "kind": "sensor", sensor_id: string, quantity: Quantity, } | { "kind": "constant", quantity: Quantity, value: number, } | { "kind": "curve", input: Quantity, points: Array<CurvePoint>, } | { "kind": "mix", quantity: Quantity, mode: MixMode, } | { "kind": "clamp", quantity: Quantity, min: number, max: number, } | { "kind": "offset", quantity: Quantity, delta: number, } | { "kind": "scale", quantity: Quantity, factor: number, } | { "kind": "reinterpret", from: Quantity, to: Quantity, } | { "kind": "rate-limit", quantity: Quantity, max_delta_per_second: number, } | { "kind": "low-pass", quantity: Quantity, tau_seconds: number, } | { "kind": "moving-average", quantity: Quantity, samples: number, } | { "kind": "hold", quantity: Quantity, band: number, } | { "kind": "comparator", quantity: Quantity, threshold: number, deadband: number, direction: Compare, } | { "kind": "select", quantity: Quantity, } | { "kind": "pid", quantity: Quantity, setpoint: number, kp: number, ki: number, kd: number, 
+export type NodeKind = { "kind": "sensor", sensor_id: string, quantity: Quantity, } | { "kind": "constant", value: number, } | { "kind": "curve", points: Array<CurvePoint>, } | { "kind": "mix", mode: MixMode, } | { "kind": "clamp", min: number, max: number, } | { "kind": "offset", delta: number, } | { "kind": "scale", factor: number, } | { "kind": "reinterpret", from: Quantity, to: Quantity, } | { "kind": "rate-limit", max_delta_per_second: number, } | { "kind": "low-pass", tau_seconds: number, } | { "kind": "moving-average", samples: number, } | { "kind": "hold", band: number, } | { "kind": "comparator", threshold: number, deadband: number, direction: Compare, } | { "kind": "select" } | { "kind": "pid", setpoint: number, kp: number, ki: number, kd: number, 
 /**
  * Bound on the integral's contribution, in duty percent.
  */

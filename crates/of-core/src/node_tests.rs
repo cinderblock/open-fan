@@ -53,10 +53,7 @@ fn probe(g: &CompiledGraph, value: f64, q: Quantity, state: &mut EvalState) -> f
 #[test]
 fn low_pass_reaches_63_percent_after_one_time_constant() {
     let g = pipeline(
-        NodeKind::LowPass {
-            quantity: Quantity::Temperature,
-            tau_seconds: 1.0,
-        },
+        NodeKind::LowPass { tau_seconds: 1.0 },
         Quantity::Temperature,
     )
     .validate()
@@ -84,10 +81,7 @@ fn low_pass_is_tuned_in_seconds_not_ticks() {
     // tuning knob, and what stops a busy machine from quietly changing fan behaviour.
     let run = |dt: f64, ticks: usize| {
         let g = pipeline(
-            NodeKind::LowPass {
-                quantity: Quantity::Temperature,
-                tau_seconds: 2.0,
-            },
+            NodeKind::LowPass { tau_seconds: 2.0 },
             Quantity::Temperature,
         )
         .validate()
@@ -124,7 +118,6 @@ fn low_pass_is_tuned_in_seconds_not_ticks() {
 fn rate_limit_is_per_second_and_scales_with_dt() {
     let g = pipeline(
         NodeKind::RateLimit {
-            quantity: Quantity::Duty,
             max_delta_per_second: 10.0,
         },
         Quantity::Duty,
@@ -150,10 +143,7 @@ fn rate_limit_is_per_second_and_scales_with_dt() {
 #[test]
 fn moving_average_smooths_then_forgets_on_a_fault() {
     let g = pipeline(
-        NodeKind::MovingAverage {
-            quantity: Quantity::Temperature,
-            samples: 4,
-        },
+        NodeKind::MovingAverage { samples: 4 },
         Quantity::Temperature,
     )
     .validate()
@@ -176,15 +166,9 @@ fn moving_average_smooths_then_forgets_on_a_fault() {
 
 #[test]
 fn hold_ignores_noise_inside_its_band_but_follows_real_movement() {
-    let g = pipeline(
-        NodeKind::Hold {
-            quantity: Quantity::Temperature,
-            band: 2.0,
-        },
-        Quantity::Temperature,
-    )
-    .validate()
-    .unwrap();
+    let g = pipeline(NodeKind::Hold { band: 2.0 }, Quantity::Temperature)
+        .validate()
+        .unwrap();
     let mut state = EvalState::new();
 
     assert_eq!(probe(&g, 50.0, Quantity::Temperature, &mut state), 50.0);
@@ -201,7 +185,6 @@ fn hold_ignores_noise_inside_its_band_but_follows_real_movement() {
 fn comparator_deadband_prevents_chatter_on_the_threshold() {
     let g = pipeline(
         NodeKind::Comparator {
-            quantity: Quantity::Temperature,
             threshold: 60.0,
             deadband: 4.0,
             direction: Compare::Above,
@@ -233,26 +216,9 @@ fn select_routes_between_two_inputs_and_faults_without_a_flag() {
             quantity: Quantity::Boolean,
         },
     );
-    g.insert(
-        "quiet",
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 30.0,
-        },
-    );
-    g.insert(
-        "loud",
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 80.0,
-        },
-    );
-    g.insert(
-        "sel",
-        NodeKind::Select {
-            quantity: Quantity::Duty,
-        },
-    );
+    g.insert("quiet", NodeKind::Constant { value: 30.0 });
+    g.insert("loud", NodeKind::Constant { value: 80.0 });
+    g.insert("sel", NodeKind::Select);
     g.insert(
         "fan",
         NodeKind::FanOutput {
@@ -365,29 +331,17 @@ fn reinterpret_is_the_only_way_across_types() {
 
 #[test]
 fn offset_and_scale_shift_a_value() {
-    let g = pipeline(
-        NodeKind::Offset {
-            quantity: Quantity::Temperature,
-            delta: -5.0,
-        },
-        Quantity::Temperature,
-    )
-    .validate()
-    .unwrap();
+    let g = pipeline(NodeKind::Offset { delta: -5.0 }, Quantity::Temperature)
+        .validate()
+        .unwrap();
     assert_eq!(
         probe(&g, 50.0, Quantity::Temperature, &mut EvalState::new()),
         45.0
     );
 
-    let g = pipeline(
-        NodeKind::Scale {
-            quantity: Quantity::Duty,
-            factor: 0.5,
-        },
-        Quantity::Duty,
-    )
-    .validate()
-    .unwrap();
+    let g = pipeline(NodeKind::Scale { factor: 0.5 }, Quantity::Duty)
+        .validate()
+        .unwrap();
     assert_eq!(probe(&g, 80.0, Quantity::Duty, &mut EvalState::new()), 40.0);
 }
 
@@ -397,7 +351,6 @@ fn offset_and_scale_shift_a_value() {
 fn pid_is_proportional_with_no_derivative_kick_on_the_first_sample() {
     let g = pipeline(
         NodeKind::Pid {
-            quantity: Quantity::Temperature,
             setpoint: 50.0,
             kp: 2.0,
             ki: 0.0,
@@ -421,7 +374,6 @@ fn pid_is_proportional_with_no_derivative_kick_on_the_first_sample() {
 fn pid_integral_is_bounded_by_its_contribution() {
     let g = pipeline(
         NodeKind::Pid {
-            quantity: Quantity::Temperature,
             setpoint: 50.0,
             kp: 0.0,
             ki: 1.0,
@@ -451,7 +403,6 @@ fn pid_integral_is_bounded_by_its_contribution() {
 fn pid_does_not_integrate_across_a_sensor_fault() {
     let g = pipeline(
         NodeKind::Pid {
-            quantity: Quantity::Temperature,
             setpoint: 50.0,
             kp: 0.0,
             ki: 1.0,
@@ -482,62 +433,31 @@ fn every_kind() -> Vec<NodeKind> {
             sensor_id: "s".into(),
             quantity: Quantity::Temperature,
         },
-        NodeKind::Constant {
-            quantity: Quantity::Duty,
-            value: 0.0,
-        },
+        NodeKind::Constant { value: 0.0 },
         NodeKind::Curve {
-            input: Quantity::Temperature,
             points: vec![CurvePoint { x: 0.0, y: 0.0 }],
         },
-        NodeKind::Mix {
-            quantity: Quantity::Duty,
-            mode: MixMode::Max,
-        },
-        NodeKind::Clamp {
-            quantity: Quantity::Duty,
-            min: 0.0,
-            max: 1.0,
-        },
-        NodeKind::Offset {
-            quantity: Quantity::Duty,
-            delta: 0.0,
-        },
-        NodeKind::Scale {
-            quantity: Quantity::Duty,
-            factor: 1.0,
-        },
+        NodeKind::Mix { mode: MixMode::Max },
+        NodeKind::Clamp { min: 0.0, max: 1.0 },
+        NodeKind::Offset { delta: 0.0 },
+        NodeKind::Scale { factor: 1.0 },
         NodeKind::Reinterpret {
             from: Quantity::Load,
             to: Quantity::Duty,
         },
         NodeKind::RateLimit {
-            quantity: Quantity::Duty,
             max_delta_per_second: 1.0,
         },
-        NodeKind::LowPass {
-            quantity: Quantity::Duty,
-            tau_seconds: 1.0,
-        },
-        NodeKind::MovingAverage {
-            quantity: Quantity::Duty,
-            samples: 2,
-        },
-        NodeKind::Hold {
-            quantity: Quantity::Duty,
-            band: 1.0,
-        },
+        NodeKind::LowPass { tau_seconds: 1.0 },
+        NodeKind::MovingAverage { samples: 2 },
+        NodeKind::Hold { band: 1.0 },
         NodeKind::Comparator {
-            quantity: Quantity::Duty,
             threshold: 0.0,
             deadband: 0.0,
             direction: Compare::Above,
         },
-        NodeKind::Select {
-            quantity: Quantity::Duty,
-        },
+        NodeKind::Select,
         NodeKind::Pid {
-            quantity: Quantity::Temperature,
             setpoint: 0.0,
             kp: 0.0,
             ki: 0.0,

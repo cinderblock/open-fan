@@ -17,7 +17,8 @@ import type {
 import NodeInspector from './NodeInspector';
 import { kindTag } from './graph';
 import type { NodeCategory } from './bindings/NodeCategory';
-import { ALL_QUANTITIES, styleOf } from './quantities';
+import type { Quantity } from './bindings/Quantity';
+import { ALL_QUANTITIES, GENERIC_STYLE, styleOf } from './quantities';
 
 const CATEGORY_ORDER: NodeCategory[] = ['source', 'transform', 'stateful', 'logic', 'sink'];
 
@@ -37,6 +38,7 @@ interface Props {
   dirty: boolean;
   selectedId: string | null;
   selectedNode: NodeInstance | null;
+  selectedType: Quantity | null;
   onAdd: (descriptor: NodeDescriptor) => void;
   onApply: () => void;
   onRevert: () => void;
@@ -105,6 +107,7 @@ export default function Sidebar({
   dirty,
   selectedId,
   selectedNode,
+  selectedType,
   onAdd,
   onApply,
   onRevert,
@@ -171,6 +174,7 @@ export default function Sidebar({
           node={selectedNode}
           descriptor={catalogue.find((d) => d.kind === kindTag(selectedNode))}
           inventory={hardware}
+          nodeType={selectedType}
           onChange={(next) => onChangeNode(selectedId, next)}
         />
       )}
@@ -201,9 +205,15 @@ export default function Sidebar({
         <h2 className="sidebar__heading">Connection types</h2>
         <p className="legend__hint">
           A connection is only legal between identical types. Converting between them is
-          something a node does, explicitly.
+          something a node does, explicitly. White ports carry whatever they are given
+          and lock to a colour once a connection decides them.
         </p>
         <ul className="legend__list">
+          <li className="legend__item">
+            <span className="legend__swatch legend__swatch--generic" />
+            <span className="legend__label">{GENERIC_STYLE.label}</span>
+            <span className="legend__symbol">any</span>
+          </li>
           {ALL_QUANTITIES.map((q) => {
             const s = styleOf(q);
             return (

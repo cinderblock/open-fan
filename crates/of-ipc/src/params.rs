@@ -173,24 +173,20 @@ fn choice(key: &str, label: &str, options: &[(&str, &str)]) -> ParamSpec {
 /// spec keys cover the serialized fields exactly.
 pub fn params_for(kind: &NodeKind) -> Vec<ParamSpec> {
     match kind {
+        // Sensors and Reinterpret are the only kinds that name a type: they are where
+        // concrete types enter the graph, or deliberately change. Everything else infers.
         NodeKind::Sensor { .. } => vec![
             ParamSpec::new("sensor_id", "Sensor", ParamKind::Sensor),
             quantity_picker("quantity", "Reads").help(
-                "Set for you when you pick a sensor. A reading that arrives as a \
-                 different quantity faults rather than being used.",
+                "Set for you when you pick a sensor. A reading that arrives as a                  different quantity faults rather than being used.",
             ),
         ],
-        NodeKind::Constant { .. } => vec![
-            quantity_picker("quantity", "Type"),
-            number("value", "Value", 1.0, ParamUnit::Quantity),
-        ],
+        NodeKind::Constant { .. } => vec![number("value", "Value", 1.0, ParamUnit::Quantity)],
         NodeKind::Curve { .. } => vec![
-            quantity_picker("input", "Input type"),
             ParamSpec::new("points", "Curve", ParamKind::Curve)
                 .help("Outside the first and last point the curve is held flat."),
         ],
         NodeKind::Mix { .. } => vec![
-            quantity_picker("quantity", "Type"),
             choice(
                 "mode",
                 "Combine using",
@@ -204,27 +200,18 @@ pub fn params_for(kind: &NodeKind) -> Vec<ParamSpec> {
             .help("A dead input poisons the result rather than being averaged away."),
         ],
         NodeKind::Clamp { .. } => vec![
-            quantity_picker("quantity", "Type"),
             in_quantity("min", "Minimum"),
             in_quantity("max", "Maximum"),
         ],
-        NodeKind::Offset { .. } => vec![
-            quantity_picker("quantity", "Type"),
-            in_quantity("delta", "Add"),
-        ],
-        NodeKind::Scale { .. } => vec![
-            quantity_picker("quantity", "Type"),
-            number("factor", "Multiply by", 0.1, ParamUnit::None),
-        ],
+        NodeKind::Offset { .. } => vec![in_quantity("delta", "Add")],
+        NodeKind::Scale { .. } => vec![number("factor", "Multiply by", 0.1, ParamUnit::None)],
         NodeKind::Reinterpret { .. } => vec![
             quantity_picker("from", "From"),
             quantity_picker("to", "To").help(
-                "Crossing the type system is deliberate and visible. Only do this where \
-                 the conversion genuinely means something.",
+                "Crossing the type system is deliberate and visible. Only do this where                  the conversion genuinely means something.",
             ),
         ],
         NodeKind::RateLimit { .. } => vec![
-            quantity_picker("quantity", "Type"),
             number(
                 "max_delta_per_second",
                 "Maximum change",
@@ -234,36 +221,27 @@ pub fn params_for(kind: &NodeKind) -> Vec<ParamSpec> {
             .help("The main tool against fans hunting on a slow heatsink."),
         ],
         NodeKind::LowPass { .. } => vec![
-            quantity_picker("quantity", "Type"),
             seconds("tau_seconds", "Time constant").help(
-                "Time to cover about 63% of a step. Tuning is in seconds, so it survives \
-                 a change of tick rate.",
+                "Time to cover about 63% of a step. Tuning is in seconds, so it survives                  a change of tick rate.",
             ),
         ],
-        NodeKind::MovingAverage { .. } => vec![
-            quantity_picker("quantity", "Type"),
-            ParamSpec::new(
-                "samples",
-                "Samples",
-                ParamKind::Integer {
-                    min: Some(1),
-                    max: Some(600),
-                },
-            ),
-        ],
+        NodeKind::MovingAverage { .. } => vec![ParamSpec::new(
+            "samples",
+            "Samples",
+            ParamKind::Integer {
+                min: Some(1),
+                max: Some(600),
+            },
+        )],
         NodeKind::Hold { .. } => vec![
-            quantity_picker("quantity", "Type"),
             in_quantity("band", "Deadband").help(
-                "Output holds until the input moves further than this. Stops fans \
-                 twitching at sensor noise.",
+                "Output holds until the input moves further than this. Stops fans                  twitching at sensor noise.",
             ),
         ],
         NodeKind::Comparator { .. } => vec![
-            quantity_picker("quantity", "Type"),
             in_quantity("threshold", "Threshold"),
             in_quantity("deadband", "Deadband").help(
-                "The input must clear the threshold by half this before the result \
-                 flips, so it cannot chatter.",
+                "The input must clear the threshold by half this before the result                  flips, so it cannot chatter.",
             ),
             choice(
                 "direction",
@@ -274,9 +252,9 @@ pub fn params_for(kind: &NodeKind) -> Vec<ParamSpec> {
                 ],
             ),
         ],
-        NodeKind::Select { .. } => vec![quantity_picker("quantity", "Type")],
+        // Nothing to configure: it routes whatever it is given, and the type is inferred.
+        NodeKind::Select => vec![],
         NodeKind::Pid { .. } => vec![
-            quantity_picker("quantity", "Measures"),
             in_quantity("setpoint", "Setpoint"),
             number("kp", "Proportional gain", 0.1, ParamUnit::None),
             number("ki", "Integral gain", 0.05, ParamUnit::None),
@@ -292,8 +270,7 @@ pub fn params_for(kind: &NodeKind) -> Vec<ParamSpec> {
                 },
             )
             .help(
-                "Caps what the integral term may contribute, so it cannot wind up and \
-                 hold the fans at full long after the load has gone.",
+                "Caps what the integral term may contribute, so it cannot wind up and                  hold the fans at full long after the load has gone.",
             ),
         ],
         NodeKind::FanOutput { .. } => {
@@ -380,6 +357,12 @@ mod tests {
     #[test]
     fn descriptors_carry_their_parameters() {
         for descriptor in catalogue() {
+            // Select is the one kind with nothing to configure: it routes whatever it is
+            // given, and its type is inferred rather than declared.
+            if matches!(descriptor.template, NodeKind::Select) {
+                assert!(descriptor.params.is_empty());
+                continue;
+            }
             assert!(
                 !descriptor.params.is_empty(),
                 "{} has no editable parameters",

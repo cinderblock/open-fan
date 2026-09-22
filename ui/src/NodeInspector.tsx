@@ -27,6 +27,11 @@ interface Props {
   node: NodeInstance;
   descriptor: NodeDescriptor | undefined;
   inventory: HardwareInventory | null;
+  /**
+   * What this node turned out to be carrying, from inference. `null` while it is still
+   * generic — units then read as bare numbers, which is the honest rendering.
+   */
+  nodeType: Quantity | null;
   onChange: (next: NodeInstance) => void;
 }
 
@@ -36,7 +41,7 @@ interface Props {
  * Quantity-relative units read the node's own type field, so a Hold band shows degrees on
  * a temperature and percent on a duty without the backend having to guess.
  */
-function unitSymbol(unit: ParamUnit, kind: KindRecord): string {
+function unitSymbol(unit: ParamUnit, nodeType: Quantity | null): string {
   switch (unit.unit) {
     case 'none':
       return '';
@@ -44,9 +49,10 @@ function unitSymbol(unit: ParamUnit, kind: KindRecord): string {
       return unit.symbol;
     case 'quantity':
     case 'quantity-rate': {
-      const q = (kind.quantity ?? kind.input ?? kind.to) as Quantity | undefined;
-      const symbol = q ? styleOf(q).symbol : '';
-      return unit.unit === 'quantity-rate' ? `${symbol}/s` : symbol;
+      // Undecided types have no honest symbol, so show none rather than guessing.
+      const symbol = nodeType ? styleOf(nodeType).symbol : '';
+      if (unit.unit === 'quantity-rate') return symbol ? `${symbol}/s` : '/s';
+      return symbol;
     }
   }
 }
@@ -113,7 +119,7 @@ function CurveEditor({
   onChange,
 }: {
   points: CurvePoint[];
-  inputQuantity: Quantity;
+  inputQuantity: Quantity | null;
   onChange: (next: CurvePoint[]) => void;
 }) {
   const sorted = [...points].sort((a, b) => a.x - b.x);
@@ -230,11 +236,13 @@ function Control({
   spec,
   kind,
   inventory,
+  nodeType,
   onSet,
 }: {
   spec: ParamSpec;
   kind: KindRecord;
   inventory: HardwareInventory | null;
+  nodeType: Quantity | null;
   onSet: (patch: KindRecord) => void;
 }) {
   const value = kind[spec.key];
@@ -248,7 +256,7 @@ function Control({
           min={spec.kind.min}
           max={spec.kind.max}
           step={spec.kind.step}
-          suffix={unitSymbol(spec.kind.unit, kind)}
+          suffix={unitSymbol(spec.kind.unit, nodeType)}
           onChange={set}
         />
       );
@@ -346,14 +354,21 @@ function Control({
       return (
         <CurveEditor
           points={Array.isArray(value) ? (value as CurvePoint[]) : []}
-          inputQuantity={(kind.input as Quantity) ?? 'temperature'}
+          inputQuantity={nodeType}
           onChange={set}
         />
       );
   }
 }
 
-export default function NodeInspector({ nodeId, node, descriptor, inventory, onChange }: Props) {
+export default function NodeInspector({
+  nodeId,
+  node,
+  descriptor,
+  inventory,
+  nodeType,
+  onChange,
+}: Props) {
   const labelId = useId();
   const kind = node.kind as unknown as KindRecord;
 
@@ -380,7 +395,13 @@ export default function NodeInspector({ nodeId, node, descriptor, inventory, onC
 
       {descriptor?.params.map((spec) => (
         <Field key={spec.key} label={spec.label} help={spec.help}>
-          <Control spec={spec} kind={kind} inventory={inventory} onSet={patch} />
+          <Control
+            spec={spec}
+            kind={kind}
+            inventory={inventory}
+            nodeType={nodeType}
+            onSet={patch}
+          />
         </Field>
       ))}
 

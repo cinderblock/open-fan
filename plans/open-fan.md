@@ -369,3 +369,28 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   - Canvas selection is held in React state, not read off React Flow. Rebuilding the
     canvas discards its selection flags, which would otherwise close the inspector on
     every keystroke.
+- **2026-09-21** — **Generic nodes and type inference.** Most transforms do not care what
+  they carry, so they now declare their ports as a *type variable* and the type is
+  inferred from what they are wired to. Concrete types enter at the edges (a sensor reads
+  a temperature, a fan takes a duty, a curve emits one) and propagate inwards.
+  - Twelve node kinds lost their `quantity`/`input` parameter entirely. There is no type
+    to configure and therefore no way to set one inconsistently with the wiring.
+  - `of-core::infer` is union-find over variables with at most one concrete binding per
+    class. Variables are scoped per node, so two Clamps using `T` are independent.
+  - **Unresolved is not an error.** A chain of generic nodes with nothing attached is a
+    normal half-built graph; the editor draws those ports hollow white and they lock to a
+    colour the moment a connection decides them.
+  - A new `TypeConflict` error is attributed to the *node* that would have to be two
+    things at once, which is more useful than blaming one of its edges.
+  - The editor calls `resolve_types` on each structural edit rather than reimplementing
+    unification. Drag-time validity uses the last resolved map with the rule "undecided
+    accepts anything"; the backend re-infers on apply and remains the authority.
+  - Runtime agrees with inference: generic nodes carry their *input's* quantity through,
+    so a value cannot reach a sink tagged as something it is not. Only `Constant` needs
+    the inferred type handed to it, having no input to take it from.
+  - Gotcha: rewriting `node.rs` wholesale silently dropped the `cfg_attr` ts-rs derives,
+    which surfaced as `NodeKind: TS is not satisfied` from a *different* crate. Check the
+    derives survived after any full-file rewrite.
+  - Gotcha: leaving `tauri dev` running during a large refactor corrupts incremental
+    artifacts — it rebuilds the same `target/` concurrently. Symptom is a link error
+    about `unresolved external symbol anon...llvm...`; fix is `cargo clean -p <crate>`.

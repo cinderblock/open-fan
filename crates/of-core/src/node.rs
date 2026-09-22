@@ -4,6 +4,22 @@
 //! behaviour via [`NodeKind::eval`]. Adding a node means adding a variant and both
 //! methods — the compiler will not let you forget either.
 //!
+//! # Generic nodes
+//!
+//! Most transforms do not care what they are carrying. A rate limiter limits the rate of
+//! change of *something*; a mixer takes the maximum of *some* set of same-typed values.
+//! Those declare their ports as a **type variable** ([`PortType::Var`]) rather than a
+//! concrete quantity, and the type is inferred from whatever they are connected to.
+//!
+//! Concrete types enter the graph at its edges — a sensor reads a temperature, a fan
+//! takes a duty, a curve emits a duty — and propagate inwards through the variables. A
+//! node whose variable is still unconstrained is genuinely generic and stays that way;
+//! the editor draws such ports in neutral white, and they lock to a colour the moment a
+//! connection decides them.
+//!
+//! The payoff is that most nodes have no type parameter to configure at all, and a chain
+//! that is consistent end to end cannot be built wrong.
+//!
 //! # Time
 //!
 //! Stateful nodes are parameterised in **seconds**, not ticks, and receive the elapsed
@@ -25,12 +41,42 @@ use serde::{Deserialize, Serialize};
 
 use crate::SensorReadings;
 
+/// The name of the type variable used by every single-parameter generic node.
+///
+/// Variables are scoped to a node, so every generic node can reuse the same name without
+/// them becoming entangled.
+pub const T: &str = "T";
+
+/// A port's declared type: either a fixed quantity or a variable to be inferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PortType {
+    /// A fixed quantity. These are the anchors inference propagates from.
+    Concrete(Quantity),
+    /// A variable, scoped to the node that declares it. Ports sharing a name on the same
+    /// node must resolve to the same quantity.
+    Var(&'static str),
+}
+
+impl PortType {
+    pub const fn concrete(&self) -> Option<Quantity> {
+        match self {
+            PortType::Concrete(q) => Some(*q),
+            PortType::Var(_) => None,
+        }
+    }
+
+    pub const fn is_generic(&self) -> bool {
+        matches!(self, PortType::Var(_))
+    }
+}
+
 /// One typed port on a node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortSpec {
     pub key: &'static str,
     pub label: &'static str,
-    pub quantity: Quantity,
+    pub ty: PortType,
     /// The graph is invalid if a required input is left unconnected. Optional inputs
     /// fall back to a node-defined default.
     pub required: bool,
@@ -39,21 +85,21 @@ pub struct PortSpec {
 }
 
 impl PortSpec {
-    pub const fn input(key: &'static str, label: &'static str, quantity: Quantity) -> Self {
+    pub const fn input(key: &'static str, label: &'static str, ty: PortType) -> Self {
         Self {
             key,
             label,
-            quantity,
+            ty,
             required: true,
             variadic: false,
         }
     }
 
-    pub const fn output(key: &'static str, label: &'static str, quantity: Quantity) -> Self {
+    pub const fn output(key: &'static str, label: &'static str, ty: PortType) -> Self {
         Self {
             key,
             label,
-            quantity,
+            ty,
             required: false,
             variadic: false,
         }
@@ -68,6 +114,26 @@ impl PortSpec {
         self.variadic = true;
         self
     }
+}
+
+/// A concrete-typed input port.
+const fn fixed_in(key: &'static str, label: &'static str, q: Quantity) -> PortSpec {
+    PortSpec::input(key, label, PortType::Concrete(q))
+}
+
+/// A concrete-typed output port.
+const fn fixed_out(key: &'static str, label: &'static str, q: Quantity) -> PortSpec {
+    PortSpec::output(key, label, PortType::Concrete(q))
+}
+
+/// An input whose type is inferred.
+const fn any_in(key: &'static str, label: &'static str) -> PortSpec {
+    PortSpec::input(key, label, PortType::Var(T))
+}
+
+/// An output whose type is inferred.
+const fn any_out(key: &'static str, label: &'static str) -> PortSpec {
+    PortSpec::output(key, label, PortType::Var(T))
 }
 
 /// A node's full port signature.
@@ -154,6 +220,9 @@ pub struct NodeState {
 }
 
 /// A node's kind and its parameters.
+///
+/// Note how few variants carry a `quantity`: the generic ones infer it, so there is no
+/// type to set and no way to set one inconsistently with what it is wired to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "ts",
@@ -163,44 +232,42 @@ pub struct NodeState {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum NodeKind {
     // --- Sources ---------------------------------------------------------------------
-    /// Reads a hardware sensor by id.
+    /// Reads a hardware sensor by id. One of the places a concrete type enters the graph.
     Sensor {
         sensor_id: String,
         quantity: Quantity,
     },
 
     /// Emits a fixed value. Also the backing node for a manual slider.
-    Constant { quantity: Quantity, value: f64 },
+    ///
+    /// Generic: a constant wired into a duty input is a duty, and the same node wired
+    /// into a temperature input is a temperature.
+    Constant { value: f64 },
 
     // --- Stateless transforms --------------------------------------------------------
-    /// Maps an input quantity onto a duty via a piecewise-linear transfer curve.
+    /// Maps any input quantity onto a duty via a piecewise-linear transfer curve.
     ///
     /// This is the node that makes `Temperature → Duty` legal, and the reason that
     /// conversion cannot happen by accident anywhere else.
-    Curve {
-        input: Quantity,
-        points: Vec<CurvePoint>,
-    },
+    Curve { points: Vec<CurvePoint> },
 
-    /// Combines any number of same-quantity inputs into one.
-    Mix { quantity: Quantity, mode: MixMode },
+    /// Combines any number of same-typed inputs into one.
+    Mix { mode: MixMode },
 
     /// Constrains a value to a range.
-    Clamp {
-        quantity: Quantity,
-        min: f64,
-        max: f64,
-    },
+    Clamp { min: f64, max: f64 },
 
     /// Adds a constant.
-    Offset { quantity: Quantity, delta: f64 },
+    Offset { delta: f64 },
 
     /// Multiplies by a constant.
-    Scale { quantity: Quantity, factor: f64 },
+    Scale { factor: f64 },
 
-    /// Converts a quantity to a dimensionless ratio against a reference, and back.
-    /// The explicit escape hatch for arithmetic the type system otherwise forbids —
-    /// conspicuous by design, so it shows up in review of a graph.
+    /// Reads a value as a different type.
+    ///
+    /// The explicit escape hatch for conversions the type system otherwise forbids, and
+    /// deliberately the only node with two independent concrete types — crossing the
+    /// type system should be visible when reading a graph.
     Reinterpret { from: Quantity, to: Quantity },
 
     // --- Stateful transforms ---------------------------------------------------------
@@ -208,34 +275,27 @@ pub enum NodeKind {
     ///
     /// The primary tool against the audible hunting an aggressive curve produces on a
     /// slow thermal mass.
-    RateLimit {
-        quantity: Quantity,
-        max_delta_per_second: f64,
-    },
+    RateLimit { max_delta_per_second: f64 },
 
     /// First-order exponential smoothing with a time constant in seconds.
-    LowPass {
-        quantity: Quantity,
-        tau_seconds: f64,
-    },
+    LowPass { tau_seconds: f64 },
 
     /// Unweighted mean of the last `samples` values.
-    MovingAverage { quantity: Quantity, samples: usize },
+    MovingAverage { samples: usize },
 
     /// Holds its output until the input moves further than `band` from the held value.
     /// Stops a fan twitching at every 0.1 °C of sensor noise.
-    Hold { quantity: Quantity, band: f64 },
+    Hold { band: f64 },
 
     /// Threshold test with a deadband, producing a boolean.
     Comparator {
-        quantity: Quantity,
         threshold: f64,
         deadband: f64,
         direction: Compare,
     },
 
-    /// Chooses between two same-quantity inputs.
-    Select { quantity: Quantity },
+    /// Chooses between two same-typed inputs.
+    Select,
 
     /// Proportional–integral–derivative controller driving a duty from a measurement.
     ///
@@ -243,7 +303,6 @@ pub enum NodeKind {
     /// than allowed to wind up, because a saturated integrator is how a controller ends
     /// up commanding full duty for minutes after the load has gone away.
     Pid {
-        quantity: Quantity,
         setpoint: f64,
         kp: f64,
         ki: f64,
@@ -273,7 +332,7 @@ impl NodeKind {
             NodeKind::MovingAverage { .. } => "Moving average",
             NodeKind::Hold { .. } => "Hold",
             NodeKind::Comparator { .. } => "Comparator",
-            NodeKind::Select { .. } => "Select",
+            NodeKind::Select => "Select",
             NodeKind::Pid { .. } => "PID",
             NodeKind::FanOutput { .. } => "Fan output",
         }
@@ -284,63 +343,68 @@ impl NodeKind {
         match self {
             NodeKind::Sensor { quantity, .. } => NodeSpec {
                 inputs: vec![],
-                outputs: vec![PortSpec::output("out", "Reading", *quantity)],
+                outputs: vec![fixed_out("out", "Reading", *quantity)],
             },
-            NodeKind::Constant { quantity, .. } => NodeSpec {
+            NodeKind::Constant { .. } => NodeSpec {
                 inputs: vec![],
-                outputs: vec![PortSpec::output("out", "Value", *quantity)],
+                outputs: vec![any_out("out", "Value")],
             },
-            NodeKind::Curve { input, .. } => NodeSpec {
-                inputs: vec![PortSpec::input("in", "Input", *input)],
-                outputs: vec![PortSpec::output("out", "Duty", Quantity::Duty)],
+            NodeKind::Curve { .. } => NodeSpec {
+                inputs: vec![any_in("in", "Input")],
+                outputs: vec![fixed_out("out", "Duty", Quantity::Duty)],
             },
-            NodeKind::Mix { quantity, .. } => NodeSpec {
-                inputs: vec![PortSpec::input("in", "Inputs", *quantity).variadic()],
-                outputs: vec![PortSpec::output("out", "Result", *quantity)],
+            NodeKind::Mix { .. } => NodeSpec {
+                inputs: vec![any_in("in", "Inputs").variadic()],
+                outputs: vec![any_out("out", "Result")],
             },
-            NodeKind::Clamp { quantity, .. }
-            | NodeKind::Offset { quantity, .. }
-            | NodeKind::Scale { quantity, .. }
-            | NodeKind::RateLimit { quantity, .. }
-            | NodeKind::LowPass { quantity, .. }
-            | NodeKind::MovingAverage { quantity, .. }
-            | NodeKind::Hold { quantity, .. } => NodeSpec {
-                inputs: vec![PortSpec::input("in", "Input", *quantity)],
-                outputs: vec![PortSpec::output("out", "Output", *quantity)],
+            NodeKind::Clamp { .. }
+            | NodeKind::Offset { .. }
+            | NodeKind::Scale { .. }
+            | NodeKind::RateLimit { .. }
+            | NodeKind::LowPass { .. }
+            | NodeKind::MovingAverage { .. }
+            | NodeKind::Hold { .. } => NodeSpec {
+                inputs: vec![any_in("in", "Input")],
+                outputs: vec![any_out("out", "Output")],
             },
             NodeKind::Reinterpret { from, to } => NodeSpec {
-                inputs: vec![PortSpec::input("in", "Input", *from)],
-                outputs: vec![PortSpec::output("out", "Output", *to)],
+                inputs: vec![fixed_in("in", "Input", *from)],
+                outputs: vec![fixed_out("out", "Output", *to)],
             },
-            NodeKind::Comparator { quantity, .. } => NodeSpec {
-                inputs: vec![PortSpec::input("in", "Input", *quantity)],
-                outputs: vec![PortSpec::output("out", "Result", Quantity::Boolean)],
+            NodeKind::Comparator { .. } => NodeSpec {
+                inputs: vec![any_in("in", "Input")],
+                outputs: vec![fixed_out("out", "Result", Quantity::Boolean)],
             },
-            NodeKind::Select { quantity } => NodeSpec {
+            NodeKind::Select => NodeSpec {
                 inputs: vec![
-                    PortSpec::input("when", "When", Quantity::Boolean),
-                    PortSpec::input("if_true", "If true", *quantity),
-                    PortSpec::input("if_false", "If false", *quantity),
+                    fixed_in("when", "When", Quantity::Boolean),
+                    any_in("if_true", "If true"),
+                    any_in("if_false", "If false"),
                 ],
-                outputs: vec![PortSpec::output("out", "Output", *quantity)],
+                outputs: vec![any_out("out", "Output")],
             },
-            NodeKind::Pid { quantity, .. } => NodeSpec {
-                inputs: vec![PortSpec::input("in", "Measurement", *quantity)],
-                outputs: vec![PortSpec::output("out", "Duty", Quantity::Duty)],
+            NodeKind::Pid { .. } => NodeSpec {
+                inputs: vec![any_in("in", "Measurement")],
+                outputs: vec![fixed_out("out", "Duty", Quantity::Duty)],
             },
             NodeKind::FanOutput { .. } => NodeSpec {
-                inputs: vec![PortSpec::input("duty", "Duty", Quantity::Duty)],
+                inputs: vec![fixed_in("duty", "Duty", Quantity::Duty)],
                 outputs: vec![],
             },
         }
     }
 
     /// Evaluate this node for one tick.
+    ///
+    /// `out_type` is the inferred quantity of the node's `out` port, used only by nodes
+    /// with no input to take it from. Everything else carries its input's type through,
+    /// which is what makes a generic node generic at runtime as well as at edit time.
     pub(crate) fn eval(
         &self,
         inputs: &BTreeMap<&str, Vec<Value>>,
         ctx: &TickInput<'_>,
         state: &mut NodeState,
+        out_type: Option<Quantity>,
     ) -> Produced {
         // The single value on a non-variadic input, or NaN when nothing is connected.
         let scalar = |key: &str| -> f64 {
@@ -349,6 +413,18 @@ impl NodeKind {
                 .and_then(|v| v.first())
                 .map(|v| v.scalar)
                 .unwrap_or(f64::NAN)
+        };
+        // What a pass-through node should emit as. Prefer the type actually flowing in;
+        // fall back to what inference decided, and finally to a dimensionless value —
+        // reached only when the input is missing, in which case the value is a fault
+        // anyway and its unit is immaterial.
+        let carried = |key: &str| -> Quantity {
+            inputs
+                .get(key)
+                .and_then(|v| v.first())
+                .map(|v| v.quantity)
+                .or(out_type)
+                .unwrap_or(Quantity::Ratio)
         };
         let emit = |q: Quantity, v: f64| Produced {
             outputs: vec![("out", Value::raw(q, v))],
@@ -378,39 +454,39 @@ impl NodeKind {
                 }
             }
 
-            // Fully qualified: `Ord::clamp` is also in scope on `&Quantity` and would
-            // otherwise win, silently turning this into a two-argument range clamp.
-            NodeKind::Constant { quantity, value } => {
-                emit(*quantity, Quantity::clamp(*quantity, *value))
+            NodeKind::Constant { value } => {
+                // Nothing flows in, so the type is whatever inference settled on.
+                let q = out_type.unwrap_or(Quantity::Ratio);
+                emit(q, Quantity::clamp(q, *value))
             }
 
-            NodeKind::Curve { points, .. } => {
-                emit(Quantity::Duty, interpolate(points, scalar("in")))
-            }
+            NodeKind::Curve { points } => emit(Quantity::Duty, interpolate(points, scalar("in"))),
 
-            NodeKind::Mix { quantity, mode } => {
+            NodeKind::Mix { mode } => {
                 let values: Vec<f64> = inputs
                     .get("in")
                     .map(|v| v.iter().map(|x| x.scalar).collect())
                     .unwrap_or_default();
-                emit(*quantity, mix(*mode, &values))
+                emit(carried("in"), mix(*mode, &values))
             }
 
-            NodeKind::Clamp { quantity, min, max } => {
+            NodeKind::Clamp { min, max } => {
                 let x = scalar("in");
                 // Preserve NaN rather than clamping it to `min`: a clamp must not be
                 // able to launder a broken reading into a confident-looking number.
-                emit(*quantity, if x.is_nan() { x } else { x.clamp(*min, *max) })
+                emit(
+                    carried("in"),
+                    if x.is_nan() { x } else { x.clamp(*min, *max) },
+                )
             }
 
-            NodeKind::Offset { quantity, delta } => emit(*quantity, scalar("in") + delta),
+            NodeKind::Offset { delta } => emit(carried("in"), scalar("in") + delta),
 
-            NodeKind::Scale { quantity, factor } => emit(*quantity, scalar("in") * factor),
+            NodeKind::Scale { factor } => emit(carried("in"), scalar("in") * factor),
 
             NodeKind::Reinterpret { to, .. } => emit(*to, scalar("in")),
 
             NodeKind::RateLimit {
-                quantity,
                 max_delta_per_second,
             } => {
                 let x = scalar("in");
@@ -427,13 +503,10 @@ impl NodeKind {
                 if y.is_finite() {
                     state.last = Some(y);
                 }
-                emit(*quantity, y)
+                emit(carried("in"), y)
             }
 
-            NodeKind::LowPass {
-                quantity,
-                tau_seconds,
-            } => {
+            NodeKind::LowPass { tau_seconds } => {
                 let x = scalar("in");
                 let y = match state.last {
                     _ if !x.is_finite() => f64::NAN,
@@ -449,16 +522,17 @@ impl NodeKind {
                 if y.is_finite() {
                     state.last = Some(y);
                 }
-                emit(*quantity, y)
+                emit(carried("in"), y)
             }
 
-            NodeKind::MovingAverage { quantity, samples } => {
+            NodeKind::MovingAverage { samples } => {
                 let x = scalar("in");
+                let q = carried("in");
                 if !x.is_finite() {
                     // Drop the window: once a reading is bad, the average of the stale
                     // ones is not a measurement of anything.
                     state.history.clear();
-                    return emit(*quantity, f64::NAN);
+                    return emit(q, f64::NAN);
                 }
                 let window = (*samples).max(1);
                 state.history.push_back(x);
@@ -466,10 +540,10 @@ impl NodeKind {
                     state.history.pop_front();
                 }
                 let sum: f64 = state.history.iter().sum();
-                emit(*quantity, sum / state.history.len() as f64)
+                emit(q, sum / state.history.len() as f64)
             }
 
-            NodeKind::Hold { quantity, band } => {
+            NodeKind::Hold { band } => {
                 let x = scalar("in");
                 let y = match state.last {
                     _ if !x.is_finite() => f64::NAN,
@@ -479,14 +553,13 @@ impl NodeKind {
                 if y.is_finite() {
                     state.last = Some(y);
                 }
-                emit(*quantity, y)
+                emit(carried("in"), y)
             }
 
             NodeKind::Comparator {
                 threshold,
                 deadband,
                 direction,
-                ..
             } => {
                 let x = scalar("in");
                 if !x.is_finite() {
@@ -511,17 +584,25 @@ impl NodeKind {
                 emit(Quantity::Boolean, if state.flag { 1.0 } else { 0.0 })
             }
 
-            NodeKind::Select { quantity } => {
+            NodeKind::Select => {
                 let when = scalar("when");
+                // Either branch tells us the type; prefer whichever is actually present.
+                let q = inputs
+                    .get("if_true")
+                    .and_then(|v| v.first())
+                    .or_else(|| inputs.get("if_false").and_then(|v| v.first()))
+                    .map(|v| v.quantity)
+                    .or(out_type)
+                    .unwrap_or(Quantity::Ratio);
                 if !when.is_finite() {
-                    return emit(*quantity, f64::NAN);
+                    return emit(q, f64::NAN);
                 }
                 let chosen = if when >= 0.5 {
                     scalar("if_true")
                 } else {
                     scalar("if_false")
                 };
-                emit(*quantity, chosen)
+                emit(q, chosen)
             }
 
             NodeKind::Pid {
@@ -530,7 +611,6 @@ impl NodeKind {
                 ki,
                 kd,
                 integral_limit,
-                ..
             } => {
                 let x = scalar("in");
                 if !x.is_finite() || ctx.dt <= 0.0 {

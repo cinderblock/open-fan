@@ -29,6 +29,7 @@ import {
   getGraph,
   inventory,
   nodeCatalogue,
+  resolveTypes,
   setGraph,
   snapshot as fetchSnapshot,
   type Graph,
@@ -43,9 +44,12 @@ import {
   edgeId,
   freshId,
   groupErrors,
+  portKey,
   portsOf,
   toFlowEdges,
   toFlowNodes,
+  toPortTypeMap,
+  type PortTypeMap,
 } from './graph';
 import { placeNode } from './layout';
 import TypedNode, { type TypedNodeType } from './nodes/TypedNode';
@@ -70,6 +74,9 @@ export default function App() {
   // canvas discards React Flow's own selection flags — which would close the inspector
   // on every keystroke.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Inferred port types for the *staged* graph, so a port locks to a colour as soon as
+  // a connection decides it rather than waiting for Apply.
+  const [portTypes, setPortTypes] = useState<PortTypeMap>(new Map());
 
   const [nodes, setNodes, onNodesChange] = useNodesState<TypedNodeType>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -123,7 +130,7 @@ export default function App() {
     // rebuild resets every node to its *document* position — discarding drags that have
     // not been applied yet.
     setNodes(
-      toFlowNodes(graph, catalogue).map((node) =>
+      toFlowNodes(graph, catalogue, portTypes).map((node) =>
         node.id === selectedId ? { ...node, selected: true } : node,
       ),
     );
@@ -131,7 +138,7 @@ export default function App() {
     // `selectedId` is deliberately not a dependency: re-selecting should not rebuild the
     // whole canvas, it only needs to survive a rebuild that happens for another reason.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph, catalogue, setNodes, setEdges]);
+  }, [graph, catalogue, portTypes, setNodes, setEdges]);
 
   useEffect(() => {
     setNodes((current) =>
@@ -161,6 +168,24 @@ export default function App() {
     );
   }, [snapshot, setNodes]);
 
+  useEffect(() => {
+    if (!graph || !IN_APP) return;
+    let cancelled = false;
+    resolveTypes(applyToGraph(graph, nodes, edges))
+      .then((list) => {
+        if (!cancelled) setPortTypes(toPortTypeMap(list));
+      })
+      .catch(() => {
+        /* Inference is presentational; a failed call just leaves ports undecided. */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Positions cannot affect types, so `nodes` is deliberately not a dependency —
+    // including it would re-infer on every frame of a drag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, edges]);
+
   // --- Connection rules ----------------------------------------------------------------
 
   const quantityOf = useCallback(
@@ -168,19 +193,21 @@ export default function App() {
       if (!graph || !nodeId) return undefined;
       const instance = graph.nodes[nodeId];
       if (!instance) return undefined;
-      const { inputs, outputs } = portsOf(instance, catalogue);
+      if (handleId) return portTypes.get(portKey(nodeId, handleId)) ?? undefined;
+      // React Flow allows a null handle when a node has exactly one port on that side.
+      const { inputs, outputs } = portsOf(nodeId, instance, catalogue, portTypes);
       const ports = side === 'source' ? outputs : inputs;
-      const port = handleId ? ports.find((p) => p.key === handleId) : ports[0];
-      return port?.quantity;
+      return ports[0]?.quantity ?? undefined;
     },
-    [graph, catalogue],
+    [graph, catalogue, portTypes],
   );
 
   const isValidConnection = useCallback<IsValidConnection<Edge>>(
     (connection) => {
       const source = quantityOf(connection.source, connection.sourceHandle, 'source');
       const sink = quantityOf(connection.target, connection.targetHandle, 'target');
-      return !!source && !!sink && connects(source, sink);
+      // Undecided ports accept anything: connecting them is what decides them.
+      return connects(source, sink);
     },
     [quantityOf],
   );
@@ -189,12 +216,10 @@ export default function App() {
     (connection: Connection) => {
       const source = quantityOf(connection.source, connection.sourceHandle, 'source');
       const sink = quantityOf(connection.target, connection.targetHandle, 'target');
-      if (!source || !sink) return;
-
       if (!connects(source, sink)) {
         // React Flow already refuses the edge; this exists so the refusal is *explained*
         // rather than the drag silently doing nothing.
-        setRejection(rejectionReason(source, sink));
+        if (source && sink) setRejection(rejectionReason(source, sink));
         return;
       }
       setRejection(null);
@@ -368,6 +393,13 @@ export default function App() {
         onDelete={deleteSelected}
         selectedId={selectedId}
         selectedNode={selectedId ? (graph?.nodes[selectedId] ?? null) : null}
+        selectedType={
+          selectedId
+            ? (portTypes.get(portKey(selectedId, 'in')) ??
+              portTypes.get(portKey(selectedId, 'out')) ??
+              null)
+            : null
+        }
         onChangeNode={updateNode}
       />
 
