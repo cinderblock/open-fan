@@ -30,6 +30,8 @@ serde_json = { workspace = true }
 # before anything is executed, and semver so "newer" is a decision rather than a guess.
 ureq = "3.4.2"
 minisign-verify = "0.2.5"
+# Tauri's signer wraps minisign files in base64; see update::keys.
+base64 = "0.22.1"
 semver = "1.0.28"
 
 [target.'cfg(windows)'.dependencies]

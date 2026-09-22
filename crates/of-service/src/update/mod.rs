@@ -41,6 +41,7 @@ use std::time::Duration;
 use anyhow::{Context as _, anyhow, bail};
 
 pub mod decide;
+pub mod keys;
 pub mod settings;
 
 pub use decide::{Rejection, Release};
@@ -57,13 +58,23 @@ pub const FEED_URL: &str = match option_env!("OPENFAN_UPDATE_FEED") {
 
 /// The minisign public key releases are signed with.
 ///
-/// Empty until releases are actually signed, and an empty key means **verification
-/// cannot succeed**, so neither update path will install anything. That is the correct
-/// posture for an unsigned project: refuse, loudly, rather than install unverified code
-/// as LocalSystem.
+/// **Compiled in, and deliberately not configurable at runtime.** This is the single
+/// thing standing between "the service installs an update" and "the service installs
+/// whatever an attacker served", so it must not be reachable from a request, a
+/// configuration file, or an environment variable read at start-up. A build-time override
+/// exists only so a fork can sign with its own key.
+///
+/// The private half lives in the repository's `TAURI_SIGNING_PRIVATE_KEY` secret and
+/// nowhere else that is checked in.
+///
+/// An empty key means verification **cannot** succeed, so neither update path installs
+/// anything — the right posture for a build that has no key rather than a reason to skip
+/// the check.
 pub const PUBLIC_KEY: &str = match option_env!("OPENFAN_UPDATE_PUBKEY") {
     Some(key) => key,
-    None => "",
+    None => {
+        "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQxMTA0NjdFMkY5NTI3REIKUldUYko1VXZma1lRMGFERTZSelBMMVFYWGdrMktyK0k3WmVtVjBscWx2UDRNQVBhdFkySGZwS2wK"
+    }
 };
 
 const USER_AGENT: &str = concat!("OpenFan/", env!("CARGO_PKG_VERSION"));
@@ -143,10 +154,10 @@ pub fn download_verified(release: &Release) -> anyhow::Result<PathBuf> {
             .context("reading the installer")?;
     }
 
-    let key = minisign_verify::PublicKey::decode(PUBLIC_KEY.trim())
-        .map_err(|e| anyhow!("the embedded update key is unusable: {e}"))?;
-    let signature = minisign_verify::Signature::decode(release.signature.trim())
-        .map_err(|e| anyhow!("the release signature is malformed: {e}"))?;
+    // Both formats accepted: `tauri signer` base64-wraps minisign files, plain
+    // `minisign` does not. See `keys`.
+    let key = keys::public_key(PUBLIC_KEY)?;
+    let signature = keys::signature(&release.signature)?;
 
     key.verify(&bytes, &signature, false)
         .map_err(|e| anyhow!("the downloaded installer failed signature verification: {e}"))?;

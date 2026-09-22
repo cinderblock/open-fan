@@ -58,10 +58,24 @@ jobs:
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace --exclude open-fan
 
+      - name: Fail early if the release cannot be signed
+        # A release that quietly ships unsigned is worse than one that does not ship: the
+        # service refuses to install unverified code, so those artifacts would reach users
+        # and then silently never update. Better to stop here.
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set; refusing to build an unsignable release"
+            exit 1
+          fi
+
       - name: Build and bundle
         env:
-          # Set these repository secrets to enable in-app auto-update (Phase 6).
-          # Until then the bundle is produced without an update manifest.
+          # The private half of the update signing key. The public half is compiled into
+          # the service (`of_service::update::PUBLIC_KEY`) and is not secret — it is the
+          # thing users verify *against*.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run tauri build
