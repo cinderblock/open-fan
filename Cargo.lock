@@ -2581,6 +2581,7 @@ dependencies = [
  "of-hal-mock",
  "of-hal-pawnio",
  "of-ipc",
+ "of-rpc",
  "of-units",
  "serde",
  "serde_json",
