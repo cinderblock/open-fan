@@ -27,6 +27,12 @@
   DetailPrint "Registering the OpenFan fan control service..."
   ; The service registers itself: the executable knows its own name, description and
   ; start type, so there is one definition of those rather than two that can disagree.
+  ;
+  ; `--install` is idempotent and re-points an existing registration at this install
+  ; directory. It has to be: on an upgrade the preinstall hook above has already stopped
+  ; the old service, so a registration step that failed on "already exists" would leave
+  ; the machine with a stopped service pointing at a replaced binary — fan control
+  ; silently gone after an update.
   nsExec::ExecToLog '"$INSTDIR\openfan-service.exe" --install'
   Pop $0
   ${If} $0 != 0

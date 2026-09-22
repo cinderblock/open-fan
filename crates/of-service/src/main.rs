@@ -225,9 +225,29 @@ mod platform {
             account_password: None,
         };
 
-        let service = manager
-            .create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)
-            .context("creating the service")?;
+        // Idempotent, because an upgrade runs this over an existing installation.
+        // Creating unconditionally fails with "service already exists" — and since the
+        // installer has already stopped the old service by this point, that failure would
+        // leave the machine with a stopped service still pointing at the replaced binary.
+        // Fan control silently gone after an update is the worst way to lose it.
+        let access =
+            ServiceAccess::CHANGE_CONFIG | ServiceAccess::START | ServiceAccess::QUERY_STATUS;
+
+        let service = match manager.open_service(SERVICE_NAME, access) {
+            Ok(existing) => {
+                // Re-point it at wherever we are now: an upgrade may install to a
+                // different directory, and a service with a stale ImagePath will not
+                // start at all.
+                existing
+                    .change_config(&info)
+                    .context("updating the existing service registration")?;
+                println!("Updated the existing {SERVICE_DISPLAY_NAME} registration.");
+                existing
+            }
+            Err(_) => manager
+                .create_service(&info, access)
+                .context("creating the service")?,
+        };
 
         service
             .set_description(
@@ -236,9 +256,18 @@ mod platform {
             )
             .ok();
 
-        service.start(&[] as &[&std::ffi::OsStr]).ok();
+        // Already running is success, not failure — nothing here requires it stopped.
+        if let Err(e) = service.start(&[] as &[&std::ffi::OsStr]) {
+            match service.query_status().map(|s| s.current_state) {
+                Ok(ServiceState::Running) => {
+                    println!("{SERVICE_DISPLAY_NAME} is already running.");
+                }
+                _ => return Err(anyhow::Error::new(e).context("starting the service")),
+            }
+        } else {
+            println!("Installed and started {SERVICE_DISPLAY_NAME}.");
+        }
 
-        println!("Installed and started {SERVICE_DISPLAY_NAME}.");
         Ok(())
     }
 
