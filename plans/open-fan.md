@@ -1133,8 +1133,26 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   - **Control stays opt-in.** `enable_control()` is called only by the `control-test`
     example; the application does not call it, so the app remains read-only.
 
-- **2026-09-22** — **`can_restore_firmware_control()` is per-backend but the truth is
-  per-channel.** Now a concrete finding rather than a worry, because both cases exist on
+- **2026-09-22** — **Releasing is one-way: it ends at the board's fan curve, always.**
+  Decided by Cameron, and it retires the per-channel dilemma below rather than solving it.
+  Switching control over from another application does not oblige us to reinstate that
+  application's settings — and reinstating them would hand back a duty frozen at one
+  number with nothing responding to temperature, which is the state this project exists to
+  prevent. So `release` is defined by where it *ends*, not by what it found: a channel
+  taken from the firmware goes back byte for byte, and one found in another program's
+  manual mode gets the firmware mode imposed instead.
+
+  Consequence worth noting: `can_restore_firmware_control()` can now answer **`true`**
+  unconditionally, because no case remains that it cannot handle. That is not cosmetic.
+  The engine's default failsafe is `RestoreFirmware` and it downgrades to a fixed 100 %
+  when a backend says it cannot restore — so answering honestly is what lets the quiet,
+  correct outcome happen instead of the loud fallback. The decision itself lives in
+  `nct6775::release_mode`, pure and tested over all 256 register values against four
+  firmware modes.
+
+- **2026-09-22** — ~~**`can_restore_firmware_control()` is per-backend but the truth is
+  per-channel.**~~ *Superseded by the one-way release policy above; kept for the
+  reasoning.* Now a concrete finding rather than a worry, because both cases exist on
   `Quasar` simultaneously:
 
   | | mode when found | releasing it means |
