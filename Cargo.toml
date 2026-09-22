@@ -8,6 +8,7 @@ members = [
     "crates/of-hal-pawnio",
     "crates/of-engine",
     "crates/of-config",
+    "crates/of-contention",
     "crates/of-ipc",
     "src-tauri",
 ]
@@ -28,6 +29,7 @@ of-hal-mock = { path = "crates/of-hal-mock" }
 of-hal-pawnio = { path = "crates/of-hal-pawnio" }
 of-engine = { path = "crates/of-engine" }
 of-config = { path = "crates/of-config" }
+of-contention = { path = "crates/of-contention" }
 of-ipc = { path = "crates/of-ipc" }
 
 serde = { version = "1.0.229", features = ["derive"] }

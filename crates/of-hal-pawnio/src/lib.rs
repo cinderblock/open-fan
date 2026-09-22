@@ -34,7 +34,7 @@ pub mod lpc;
 pub mod nct6775;
 
 #[cfg(windows)]
-pub use backend::SuperIoBackend;
+pub use backend::{ChannelOwnership, SuperIoBackend};
 pub use ffi::{
     PawnIo, PawnIoError, is_available, library_version, module_cache_dir, module_search_dirs,
 };

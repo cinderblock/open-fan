@@ -76,6 +76,38 @@ struct Acquired {
     duty: u8,
 }
 
+/// What the chip says about who is driving a channel.
+///
+/// Note what is *not* here: any claim about which application owns a foreign channel.
+/// The chip records the mode, not the author. A channel in manual that we do not hold
+/// might be actively driven by another program, or might simply have been abandoned there
+/// by one that has since exited — and those need different responses, so the distinction
+/// is left to the caller, which can tell them apart by watching whether the duty moves.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChannelOwnership {
+    pub index: usize,
+    pub id: ChannelId,
+    pub mode: FanMode,
+    /// The whole register byte, so a caller can restore it verbatim.
+    pub mode_register: u8,
+    pub duty: u8,
+    /// Whether *this* backend acquired it.
+    pub held_by_us: bool,
+}
+
+impl ChannelOwnership {
+    /// The chip is running one of its own algorithms: nothing needs to drive this.
+    pub fn firmware_controlled(&self) -> bool {
+        self.mode.is_firmware_controlled()
+    }
+
+    /// In manual, and not by us — so either another application is driving it, or one
+    /// left it this way and nothing is. Both mean the firmware is *not* in charge.
+    pub fn foreign_manual(&self) -> bool {
+        !self.held_by_us && !self.mode.is_firmware_controlled()
+    }
+}
+
 /// A Nuvoton Super I/O hardware monitor, reached over the LPC bus.
 pub struct SuperIoBackend {
     lpc: LpcIo,
@@ -172,6 +204,96 @@ impl SuperIoBackend {
     /// firmware curve is being changed by the firmware the whole time.
     pub fn acquired_registers(&self, index: usize) -> Option<(u8, u8)> {
         self.acquired[index].map(|a| (a.mode_register, a.duty))
+    }
+
+    /// Who appears to be driving a channel.
+    ///
+    /// Read straight off the chip, which is the only authority on this. A process list
+    /// suggests *who* to ask about a foreign channel; it never establishes that one is
+    /// contended.
+    pub fn ownership(&self) -> of_hal::Result<Vec<ChannelOwnership>> {
+        let bus = self.lpc.lock().map_err(hal_error)?;
+
+        (0..REG_FAN.len())
+            .map(|index| {
+                let mode_register = self
+                    .chip
+                    .read_byte(&bus, REG_FAN_MODE[index])
+                    .map_err(hal_error)?;
+                let duty = self
+                    .chip
+                    .read_byte(&bus, REG_PWM_WRITE[index])
+                    .map_err(hal_error)?;
+
+                let mode = mode_from_register(mode_register);
+                Ok(ChannelOwnership {
+                    index,
+                    id: self.chip.pwm_id(index),
+                    mode,
+                    mode_register,
+                    duty,
+                    held_by_us: self.acquired[index].is_some(),
+                })
+            })
+            .collect()
+    }
+
+    /// Hand a channel to one of the chip's own control algorithms.
+    ///
+    /// This is the reason taking over from another application does **not** need a
+    /// reboot. A firmware mode's configuration — its curve points, temperature source and
+    /// thresholds — lives in registers the mode selector does not touch, so it survives
+    /// a trip through manual mode no matter who made that trip. Writing a firmware mode
+    /// back therefore restarts the chip's own algorithm with the settings the board
+    /// firmware put there, without a power cycle.
+    ///
+    /// Verified on the reference machine: channel 0 was moved to manual and back four
+    /// times, and the firmware resumed curving every time.
+    ///
+    /// Only the mode is written. The duty is left alone deliberately — the algorithm
+    /// being handed control is about to choose one, and writing a value it is going to
+    /// override immediately would only create a transient.
+    ///
+    /// **This is not the same as [`release`](OutputChannel::release).** Release restores
+    /// what *we* found. This imposes a mode we chose, which is a recovery action for a
+    /// channel some other application left in manual and abandoned.
+    pub fn restore_firmware_mode(
+        &mut self,
+        channel: &ChannelId,
+        mode: FanMode,
+    ) -> of_hal::Result<()> {
+        if !self.control_enabled {
+            return Err(self.control_not_enabled());
+        }
+        if mode == FanMode::Manual {
+            return Err(HalError::Io(
+                "Manual is not a firmware mode; restoring it would leave the channel with \
+                 nobody driving it"
+                    .into(),
+            ));
+        }
+
+        let index = self.index_of(channel)?;
+        let bus = self.lpc.lock().map_err(hal_error)?;
+
+        // Preserve the low nibble, which is the firmware's own tolerance setting.
+        let current = self
+            .chip
+            .read_byte(&bus, REG_FAN_MODE[index])
+            .map_err(hal_error)?;
+        let restored = mode_into_register(current, mode);
+
+        tracing::info!(
+            channel = %channel,
+            from = format!("{current:#04X}"),
+            to = format!("{restored:#04X}"),
+            ?mode,
+            "handing channel back to firmware control"
+        );
+
+        self.chip
+            .write_byte(&bus, REG_FAN_MODE[index], restored)
+            .map_err(hal_error)
     }
 
     /// The raw mode and duty register bytes as they are right now.

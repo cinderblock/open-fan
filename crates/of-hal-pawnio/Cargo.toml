@@ -23,3 +23,6 @@ windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", 
 # Used only to find where PawnIO was installed: the installer puts PawnIOLib.dll in a
 # directory that is on no search path, so a bare LoadLibrary cannot find it.
 windows-registry = "0.100.0"
+
+[target.'cfg(windows)'.dev-dependencies]
+of-contention = { workspace = true }
