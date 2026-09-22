@@ -414,3 +414,26 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
     cycle, and the evaluator rejects cycles by design. The intended escape hatch is an
     explicit one-tick delay, which was listed in the original node families and has not
     been built. Until it exists, closed-loop-on-RPM control is not expressible.
+- **2026-09-21** — **Delayed ports; the tachometer loop is not a cycle.** Corrected the
+  previous entry's conclusion. A fan's speed output does *not* need a delay node to be
+  fed back, because the loop is already broken by the hardware and by the tick ordering:
+  we read sensors, then evaluate, then write duties, so a speed reading necessarily
+  predates this tick's duty.
+  - `PortSpec.delayed` marks an output whose value does not depend on this tick's inputs.
+    `FanOutput.rpm` and `Delay.out` are the two today.
+  - Evaluation is now two-phase: delayed outputs are produced *before* the topological
+    pass, from measurements and stored state. Cycle detection skips edges leaving a
+    delayed port. A loop with no delayed edge is still rejected — pinned by a test, since
+    the escape hatch must not quietly disable cycle detection.
+  - Stall detection (`fan.rpm → comparator → select → fan.duty`) now compiles with no
+    delay node, and there is a test asserting the graph under test contains none.
+  - `TickInput.tachometers` carries the channel→sensor map per tick rather than storing it
+    in the document. It is hardware knowledge, so a fan moved to another header must not
+    leave a saved profile reading the wrong tachometer.
+  - A `Delay` node exists on its own merits (seconds-based, like every other stateful
+    node) and can break loops that hardware does not already break.
+  - Editor: delayed edges are drawn with a long dash and labelled "earlier tick" — still
+    typed data, visibly not instantaneous. Distinct from the grey dashed same-device link.
+  - Knock-on: layout now classifies nodes by their catalogue **category** rather than by
+    counting ports. `FanOutput` has an output now, and port-counting put the sink in the
+    middle of the graph.

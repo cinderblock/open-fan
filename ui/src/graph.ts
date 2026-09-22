@@ -156,6 +156,26 @@ export function applyToGraph(
   };
 }
 
+/**
+ * Whether an edge leaves a delayed port.
+ *
+ * Those carry a value from before this tick — a tachometer reading, or a buffered past
+ * value — so they impose no ordering and are how feedback exists without a cycle. The
+ * editor draws them distinctly so that is visible rather than something you have to
+ * know.
+ */
+export function isDelayedSource(
+  graph: Graph,
+  catalogue: NodeDescriptor[],
+  nodeId: string,
+  portKey: string | null | undefined,
+): boolean {
+  const node = graph.nodes[nodeId];
+  if (!node || !portKey) return false;
+  const descriptor = catalogue.find((d) => d.kind === kindTag(node));
+  return descriptor?.outputs.some((p) => p.key === portKey && p.delayed) ?? false;
+}
+
 /** A unique node id that does not collide with anything already in the graph. */
 export function freshId(graph: Graph, tag: string): string {
   let n = 1;

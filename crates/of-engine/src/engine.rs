@@ -95,6 +95,9 @@ pub struct Engine {
     /// Quantity for each sensor the backend enumerated, so a raw `f64` can be tagged
     /// with what it actually measures before it reaches the graph.
     sensor_quantities: BTreeMap<SensorId, Quantity>,
+    /// Which sensor reads back each channel. Handed to the graph each tick so a fan can
+    /// report its own measured speed without the document storing hardware wiring.
+    tachometers: BTreeMap<ChannelId, SensorId>,
     graph: Graph,
     compiled: Option<CompiledGraph>,
     eval: EvalState,
@@ -105,17 +108,20 @@ pub struct Engine {
 impl Engine {
     /// Create an engine over a backend, enumerating its sensors.
     pub fn new(backend: Box<dyn Backend>, config: EngineConfig) -> Self {
-        let sensor_quantities = backend
+        let sensor_quantities: BTreeMap<SensorId, Quantity> = backend
             .sensors()
             .unwrap_or_default()
             .into_iter()
             .filter_map(|s| quantity_of(s.kind).map(|q| (s.id, q)))
             .collect();
 
+        let tachometers = tachometers_of(backend.as_ref());
+
         Self {
             backend,
             config,
             sensor_quantities,
+            tachometers,
             graph: Graph::default(),
             compiled: None,
             eval: EvalState::new(),
@@ -171,6 +177,7 @@ impl Engine {
             .into_iter()
             .filter_map(|s| quantity_of(s.kind).map(|q| (s.id, q)))
             .collect();
+        self.tachometers = tachometers_of(self.backend.as_ref());
     }
 
     /// Install a new graph.
@@ -263,7 +270,10 @@ impl Engine {
             return self.degrade(dt, snapshot);
         };
 
-        let tick = compiled.tick_with(&sensors, dt, &mut self.eval);
+        let tick = compiled.tick(
+            &of_core::TickInput::new(&sensors, dt).with_tachometers(&self.tachometers),
+            &mut self.eval,
+        );
         let applied = apply_tick(&tick, &self.policy, self.backend.as_mut());
 
         TickReport {
@@ -313,6 +323,16 @@ fn sanitize_dt(dt: f64, config: &EngineConfig) -> f64 {
     } else {
         dt.min(config.max_dt_seconds)
     }
+}
+
+/// Which sensor reads back each channel, from what the backend advertises.
+fn tachometers_of(backend: &dyn Backend) -> BTreeMap<ChannelId, SensorId> {
+    backend
+        .channels()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|c| c.tachometer.map(|t| (c.id, t)))
+        .collect()
 }
 
 /// What each sensor kind measures, in the graph's vocabulary.

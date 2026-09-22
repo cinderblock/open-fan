@@ -54,6 +54,10 @@ dto! {
         pub required: bool,
         /// A variadic input accepts any number of incoming connections.
         pub variadic: bool,
+        /// An output carrying a value from before this tick — a measurement, or a
+        /// buffered past value. Edges leaving one impose no ordering, which is what
+        /// lets feedback exist without a cycle. The editor draws them distinctly.
+        pub delayed: bool,
     }
 }
 
@@ -236,6 +240,7 @@ pub fn port_dto(spec: &of_core::PortSpec) -> PortDto {
         quantity: spec.ty.concrete(),
         required: spec.required,
         variadic: spec.variadic,
+        delayed: spec.delayed,
     }
 }
 
@@ -359,6 +364,11 @@ pub fn catalogue() -> Vec<NodeDescriptor> {
         descriptor(Logic, "Chooses between two inputs.", NodeKind::Select),
         descriptor(
             Stateful,
+            "Emits what it was given a while ago. Also breaks a feedback loop.",
+            NodeKind::Delay { seconds: 1.0 },
+        ),
+        descriptor(
+            Stateful,
             "Holds a temperature at a setpoint. The integral is bounded so it cannot wind up.",
             NodeKind::Pid {
                 setpoint: 65.0,
@@ -385,9 +395,9 @@ mod tests {
     #[test]
     fn the_catalogue_covers_every_node_kind() {
         // If a variant is added without a palette entry it is unreachable from the UI.
-        // 16 kinds today; this number moving is a prompt to add the descriptor, not to
-        // bump the constant.
-        assert_eq!(catalogue().len(), 16);
+        // This number moving is a prompt to add the missing descriptor, not to bump the
+        // constant — a kind with no palette entry is unreachable from the UI.
+        assert_eq!(catalogue().len(), 17);
     }
 
     #[test]

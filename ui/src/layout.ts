@@ -44,18 +44,30 @@ export interface Placed {
   position: { x: number; y: number };
 }
 
-/** A node's role, from its port signature alone. */
+/** A node's role for layout purposes. */
 export type Role = 'source' | 'transform' | 'sink';
 
-export function roleOf(ports: Pick<NodeDescriptor, 'inputs' | 'outputs'>): Role {
-  if (ports.inputs.length === 0) return 'source';
-  if (ports.outputs.length === 0) return 'sink';
-  return 'transform';
+/**
+ * Which end of the graph a node belongs to.
+ *
+ * Taken from the catalogue's own category rather than inferred from port shape. A fan
+ * output has a speed output as well as a duty input — it is still the end of the chain,
+ * and counting ports would put it in the middle.
+ */
+export function roleOf(node: Pick<NodeDescriptor, 'category'>): Role {
+  switch (node.category) {
+    case 'source':
+      return 'source';
+    case 'sink':
+      return 'sink';
+    default:
+      return 'transform';
+  }
 }
 
-/** Which column a node of this shape belongs in. */
-export function columnOf(ports: Pick<NodeDescriptor, 'inputs' | 'outputs'>): number {
-  switch (roleOf(ports)) {
+/** Which column a node of this kind belongs in. */
+export function columnOf(node: Pick<NodeDescriptor, 'category'>): number {
+  switch (roleOf(node)) {
     case 'source':
       return 0;
     case 'sink':
@@ -81,9 +93,9 @@ export function columnX(column: number): number {
  */
 export function placeNode(
   existing: readonly Placed[],
-  ports: Pick<NodeDescriptor, 'inputs' | 'outputs'>,
+  node: Pick<NodeDescriptor, 'category'>,
 ): { x: number; y: number } {
-  const x = columnX(columnOf(ports));
+  const x = columnX(columnOf(node));
   const inColumn = existing.filter(
     (node) => Math.abs(node.position.x - x) < COLUMN_WIDTH / 2,
   );

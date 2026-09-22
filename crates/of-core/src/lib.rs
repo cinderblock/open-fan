@@ -220,6 +220,20 @@ impl Graph {
             .collect()
     }
 
+    /// Whether this port is an output whose value predates the current tick.
+    pub fn is_delayed_source(&self, r: &PortRef) -> bool {
+        self.nodes
+            .get(&r.node)
+            .map(|n| n.kind.spec())
+            .and_then(|spec| {
+                spec.outputs
+                    .iter()
+                    .find(|p| p.key == r.port)
+                    .map(|p| p.delayed)
+            })
+            .unwrap_or(false)
+    }
+
     /// Look up the declared type and direction of a port, if it exists.
     fn port_spec(&self, r: &PortRef) -> Option<(PortSpec, Direction)> {
         let node = self.nodes.get(&r.node)?;
@@ -333,6 +347,13 @@ impl Graph {
             index.insert(id.clone(), g.add_node(id.clone()));
         }
         for edge in &self.edges {
+            // An edge leaving a delayed port carries a value from before this tick, so
+            // it imposes no ordering. Skipping it here is what allows genuine feedback —
+            // a tachometer steering the fan it measures — without the graph being a
+            // cycle. The delay is physical, not a modelling trick.
+            if self.is_delayed_source(&edge.from) {
+                continue;
+            }
             if let (Some(&a), Some(&b)) = (index.get(&edge.from.node), index.get(&edge.to.node)) {
                 // Self-edges are cycles too; petgraph's toposort catches them.
                 g.add_edge(a, b, ());
@@ -401,7 +422,7 @@ impl CompiledGraph {
         dt: f64,
         state: &mut EvalState,
     ) -> TickResult {
-        self.tick(&TickInput { sensors, dt }, state)
+        self.tick(&TickInput::new(sensors, dt), state)
     }
 
     /// Evaluate one tick.
@@ -414,6 +435,27 @@ impl CompiledGraph {
         // Values produced by each output port this tick.
         let mut outputs: BTreeMap<PortRef, Value> = BTreeMap::new();
 
+        // Phase one: delayed outputs. These depend on measurements and stored state
+        // rather than on anything computed below, so they must be available before the
+        // topological pass begins — that is precisely what makes feedback expressible.
+        for id in self.graph.nodes.keys() {
+            let Some(instance) = self.graph.nodes.get(id) else {
+                continue;
+            };
+            let out_type = self
+                .types
+                .get(&PortRef::new(id.clone(), "out"))
+                .copied()
+                .flatten();
+            let state = state.entry(id.clone());
+            for (key, value) in instance.kind.sourced(ctx, state, out_type) {
+                let r = PortRef::new(id.clone(), key);
+                outputs.insert(r.clone(), value);
+                result.wire_values.insert(r, value);
+            }
+        }
+
+        // Phase two: everything else, in dependency order.
         for id in &self.order {
             let Some(instance) = self.graph.nodes.get(id) else {
                 continue;
@@ -495,3 +537,6 @@ mod node_tests;
 
 #[cfg(test)]
 mod infer_tests;
+
+#[cfg(test)]
+mod feedback_tests;

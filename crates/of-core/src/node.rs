@@ -82,6 +82,16 @@ pub struct PortSpec {
     pub required: bool,
     /// A variadic input accepts any number of incoming connections (a mixer's inputs).
     pub variadic: bool,
+    /// An output whose value does **not** depend on this tick's inputs.
+    ///
+    /// A fan's tachometer is the motivating case: we read sensors, then evaluate, then
+    /// write duties, so a speed reading necessarily reflects an *earlier* duty. The
+    /// value is available before evaluation begins, which means an edge leaving such a
+    /// port creates no dependency and a graph containing one is still acyclic.
+    ///
+    /// This is what lets feedback be expressed without an artificial delay node: the
+    /// delay is real, it lives in the hardware, and the model says so.
+    pub delayed: bool,
 }
 
 impl PortSpec {
@@ -92,6 +102,7 @@ impl PortSpec {
             ty,
             required: true,
             variadic: false,
+            delayed: false,
         }
     }
 
@@ -102,6 +113,7 @@ impl PortSpec {
             ty,
             required: false,
             variadic: false,
+            delayed: false,
         }
     }
 
@@ -112,6 +124,12 @@ impl PortSpec {
 
     pub const fn variadic(mut self) -> Self {
         self.variadic = true;
+        self
+    }
+
+    /// Mark an output as carrying a value from before this tick.
+    pub const fn delayed(mut self) -> Self {
+        self.delayed = true;
         self
     }
 }
@@ -150,6 +168,27 @@ pub struct TickInput<'a> {
     /// Seconds elapsed since the previous tick. Always finite and positive; the engine
     /// clamps it so a suspended machine cannot hand the filters an hour-long step.
     pub dt: f64,
+    /// Which sensor reads back each output channel, from the hardware inventory.
+    ///
+    /// Hardware knowledge rather than user configuration, so it is supplied per tick
+    /// instead of stored in the document — a fan moved to another header must not leave
+    /// a saved profile quietly reading the wrong tachometer.
+    pub tachometers: Option<&'a BTreeMap<String, String>>,
+}
+
+impl<'a> TickInput<'a> {
+    pub fn new(sensors: &'a SensorReadings, dt: f64) -> Self {
+        Self {
+            sensors,
+            dt,
+            tachometers: None,
+        }
+    }
+
+    pub fn with_tachometers(mut self, map: &'a BTreeMap<String, String>) -> Self {
+        self.tachometers = Some(map);
+        self
+    }
 }
 
 /// How a mixer combines its inputs.
@@ -215,8 +254,10 @@ pub struct NodeState {
     pub integral: f64,
     /// Previous error, for PID's derivative term.
     pub prev_error: Option<f64>,
-    /// Recent samples, for moving averages.
+    /// Recent samples, for moving averages; sample *ages* in seconds, for delays.
     pub history: VecDeque<f64>,
+    /// Buffered values matching `history`'s ages, for delays.
+    pub buffer: VecDeque<f64>,
 }
 
 /// A node's kind and its parameters.
@@ -297,6 +338,14 @@ pub enum NodeKind {
     /// Chooses between two same-typed inputs.
     Select,
 
+    /// Emits what it was given `seconds` ago.
+    ///
+    /// Useful in its own right — staggering fans, holding a boost for a while — and its
+    /// output is delayed, so it can also sit inside a feedback path. Note that feedback
+    /// on a *tachometer* needs no delay node: that loop is already broken by the
+    /// hardware, which is what `FanOutput`'s speed output being delayed expresses.
+    Delay { seconds: f64 },
+
     /// Proportional–integral–derivative controller driving a duty from a measurement.
     ///
     /// Gains are in duty-percent per unit of error. The integral term is clamped rather
@@ -333,6 +382,7 @@ impl NodeKind {
             NodeKind::Hold { .. } => "Hold",
             NodeKind::Comparator { .. } => "Comparator",
             NodeKind::Select => "Select",
+            NodeKind::Delay { .. } => "Delay",
             NodeKind::Pid { .. } => "PID",
             NodeKind::FanOutput { .. } => "Fan output",
         }
@@ -383,14 +433,61 @@ impl NodeKind {
                 ],
                 outputs: vec![any_out("out", "Output")],
             },
+            NodeKind::Delay { .. } => NodeSpec {
+                inputs: vec![any_in("in", "Input")],
+                outputs: vec![any_out("out", "Output").delayed()],
+            },
             NodeKind::Pid { .. } => NodeSpec {
                 inputs: vec![any_in("in", "Measurement")],
                 outputs: vec![fixed_out("out", "Duty", Quantity::Duty)],
             },
+            // The speed output is delayed: it is what the tachometer measured before
+            // this tick's duty was written. An edge from it therefore creates no
+            // dependency, and feeding it back into the graph is not a cycle.
             NodeKind::FanOutput { .. } => NodeSpec {
                 inputs: vec![fixed_in("duty", "Duty", Quantity::Duty)],
-                outputs: vec![],
+                outputs: vec![fixed_out("rpm", "Speed", Quantity::Rpm).delayed()],
             },
+        }
+    }
+
+    /// Produce this node's delayed outputs.
+    ///
+    /// Runs **before** the topological pass, because by definition these values do not
+    /// depend on anything computed this tick. That ordering is the whole mechanism: it
+    /// is why a tachometer can feed back into the graph that drives its own fan without
+    /// the graph containing a cycle.
+    pub(crate) fn sourced(
+        &self,
+        ctx: &TickInput<'_>,
+        state: &NodeState,
+        out_type: Option<Quantity>,
+    ) -> Vec<(&'static str, Value)> {
+        match self {
+            NodeKind::FanOutput { channel } => {
+                // The reading has to be both present and actually a speed; a channel
+                // with no tachometer, or one re-enumerated as something else, yields a
+                // fault rather than a number.
+                let reading = ctx
+                    .tachometers
+                    .and_then(|map| map.get(channel))
+                    .and_then(|sensor| ctx.sensors.get(sensor))
+                    .filter(|v| v.quantity == Quantity::Rpm)
+                    .copied()
+                    .unwrap_or(Value::raw(Quantity::Rpm, f64::NAN));
+                vec![("rpm", reading)]
+            }
+
+            NodeKind::Delay { .. } => {
+                let q = out_type.unwrap_or(Quantity::Ratio);
+                // Nothing buffered yet means nothing has been observed to delay, which
+                // is a fault rather than a zero — a fan must not be driven from a value
+                // that was never measured.
+                let value = state.buffer.front().copied().unwrap_or(f64::NAN);
+                vec![("out", Value::raw(q, value))]
+            }
+
+            _ => Vec::new(),
         }
     }
 
@@ -642,6 +739,28 @@ impl NodeKind {
 
                 let out = kp * error + ki * state.integral + kd * derivative;
                 emit(Quantity::Duty, out.clamp(0.0, 100.0))
+            }
+
+            NodeKind::Delay { seconds } => {
+                // Samples are stamped with how long ago they arrived, so the delay stays
+                // in seconds and survives a change of tick rate like every other
+                // stateful node.
+                for age in state.history.iter_mut() {
+                    *age += ctx.dt;
+                }
+                let value = scalar("in");
+                state.history.push_back(0.0);
+                state.buffer.push_back(value);
+
+                // Drop everything older than the delay, keeping the newest such sample
+                // as the one to emit next tick.
+                while state.history.len() > 1 && state.history[1] >= seconds.max(0.0) {
+                    state.history.pop_front();
+                    state.buffer.pop_front();
+                }
+
+                // The output was produced in the delayed pass; emit nothing here.
+                Produced::default()
             }
 
             NodeKind::FanOutput { channel } => {

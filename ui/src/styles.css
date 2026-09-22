@@ -657,3 +657,17 @@ body {
   font-size: 11px;
   color: var(--ok);
 }
+
+/* --- Delayed edges -------------------------------------------------------------- */
+
+/* Still data, still typed — but carrying a value from before this tick, which is how a
+   feedback loop can exist without being a cycle. Long dashes plus a label, so it reads
+   as "data, later" rather than as the grey same-device link. */
+.edge--delayed .react-flow__edge-text {
+  fill: var(--text-dim);
+  font-size: 10px;
+}
+
+.edge--delayed .react-flow__edge-textbg {
+  fill: var(--bg);
+}

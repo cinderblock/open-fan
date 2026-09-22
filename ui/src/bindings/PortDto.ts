@@ -15,4 +15,10 @@ required: boolean,
 /**
  * A variadic input accepts any number of incoming connections.
  */
-variadic: boolean, };
+variadic: boolean, 
+/**
+ * An output carrying a value from before this tick — a measurement, or a
+ * buffered past value. Edges leaving one impose no ordering, which is what
+ * lets feedback exist without a cycle. The editor draws them distinctly.
+ */
+delayed: boolean, };

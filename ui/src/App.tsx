@@ -52,6 +52,7 @@ import {
   deviceEdgeId,
   deviceLinks,
   deviceRoles,
+  isDelayedSource,
   type PortTypeMap,
 } from './graph';
 import { placeNode } from './layout';
@@ -255,9 +256,24 @@ export default function App() {
   const styledEdges = useMemo(() => {
     const data = edges.map((edge) => {
       const q = quantityOf(edge.source, edge.sourceHandle, 'source');
-      return q
-        ? { ...edge, style: { stroke: styleOf(q).color, strokeWidth: 2, ...edge.style } }
-        : edge;
+      // A delayed edge is still data, and still typed — but it carries a value from
+      // before this tick, so it is drawn with a long dash and labelled. That is what
+      // makes a feedback loop legible as a loop that is already broken.
+      const delayed =
+        !!graph && isDelayedSource(graph, catalogue, edge.source, edge.sourceHandle);
+      const stroke = q ? styleOf(q).color : undefined;
+
+      return {
+        ...edge,
+        ...(delayed
+          ? { label: 'earlier tick', className: 'edge--delayed', type: 'smoothstep' }
+          : {}),
+        style: {
+          ...(stroke ? { stroke, strokeWidth: 2 } : {}),
+          ...(delayed ? { strokeDasharray: '9 4' } : {}),
+          ...edge.style,
+        },
+      };
     });
 
     // Same-device links are drawn, never stored: they are derived from the hardware
@@ -280,7 +296,7 @@ export default function App() {
     }));
 
     return [...data, ...device];
-  }, [edges, quantityOf, links]);
+  }, [edges, quantityOf, links, graph, catalogue]);
 
   // --- Editing -------------------------------------------------------------------------
 

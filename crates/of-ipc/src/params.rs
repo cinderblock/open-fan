@@ -254,6 +254,11 @@ pub fn params_for(kind: &NodeKind) -> Vec<ParamSpec> {
         ],
         // Nothing to configure: it routes whatever it is given, and the type is inferred.
         NodeKind::Select => vec![],
+        NodeKind::Delay { .. } => vec![
+            seconds("seconds", "Delay by").help(
+                "A fan tachometer needs no delay node — that loop is already broken by                  the hardware. Use this for feedback that is not.",
+            ),
+        ],
         NodeKind::Pid { .. } => vec![
             in_quantity("setpoint", "Setpoint"),
             number("kp", "Proportional gain", 0.1, ParamUnit::None),

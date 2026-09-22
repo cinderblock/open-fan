@@ -13,19 +13,27 @@ import {
   type Placed,
 } from './layout';
 
-/** Minimal stand-ins for the port lists placement actually reads. */
-const port = { key: 'p', label: 'p', quantity: 'duty', required: true, variadic: false } as const;
-const SOURCE = { inputs: [], outputs: [port] };
-const TRANSFORM = { inputs: [port], outputs: [port] };
-const SINK = { inputs: [port], outputs: [] };
+/** Placement reads only the catalogue category. */
+const SOURCE = { category: 'source' } as const;
+const TRANSFORM = { category: 'transform' } as const;
+const SINK = { category: 'sink' } as const;
+/** Filters and logic are laid out like any other transform. */
+const STATEFUL = { category: 'stateful' } as const;
 
 const at = (x: number, y: number): Placed => ({ position: { x, y } });
 
 describe('roles', () => {
-  test('are derived from the port signature alone', () => {
+  test('come from the catalogue category', () => {
     expect(roleOf(SOURCE)).toBe('source');
     expect(roleOf(TRANSFORM)).toBe('transform');
     expect(roleOf(SINK)).toBe('sink');
+    expect(roleOf(STATEFUL)).toBe('transform');
+  });
+
+  test('a sink stays a sink even though it has an output', () => {
+    // A fan output reports its tachometer speed, so counting ports would misplace it
+    // into the middle of the graph.
+    expect(columnOf(SINK)).toBe(SINK_COLUMN);
   });
 });
 
