@@ -656,10 +656,12 @@ and that quitting from the tray hands a header back to firmware.
 
 ### Environment differences on `Quasar` vs the dev box
 
-- **Bun is 1.3.6 here, 1.4.2 on `Noook`.** Running `bun install` on this machine rewrites
-  `bun.lock` from `lockfileVersion: 2` down to `1`. That is a lockfile *downgrade* and
-  should not be committed — it was reverted. Either align Bun versions or expect this
-  churn whenever the UI is built on this machine.
+- **Bun is 1.3.6 here, 1.4.2 on `Noook`, and the lockfiles are incompatible.** Bun 1.3.6
+  cannot even parse the `lockfileVersion: 2` that 1.4.2 writes — `bun install
+  --frozen-lockfile` fails with `Unknown lockfile version`, and a plain `bun install`
+  silently rewrites the lockfile *down* to version 1. That downgrade must not be
+  committed. Workflow on this machine until the versions are aligned: `bun install`, then
+  `git checkout -- bun.lock`. Aligning the Bun versions is the real fix.
 - `ui/node_modules` was absent; `bun install` is needed before `bun run build`.
 - **The compute broker is not installed here.** `node ~/.claude/bin/cpu-slots.mjs` does not
   exist on `Quasar` (`MODULE_NOT_FOUND`), so the build guidance in `CLAUDE.md` applies to
@@ -668,6 +670,34 @@ and that quitting from the tray hands a header back to firmware.
 - Running anything that touches hardware needs elevation, including `cargo test` if
   hardware-gated tests are ever added. The examples are all launched via
   `Start-Process -Verb RunAs`.
+
+### Why the build runs `tsc` when Bun is the toolchain
+
+`bun run build` is `tsc --noEmit && vite build`, and the `tsc` half is not redundant:
+**Bun does not type-check, and neither does Vite.** Both strip types and bundle. There is
+no `--typecheck` flag to reach for; it is a deliberate speed decision upstream.
+
+Demonstrated rather than assumed, on `Quasar` with Bun 1.3.6:
+
+```text
+$ echo 'const n: number = "definitely a string"' > bad.ts
+$ bun build bad.ts     ->  Bundled 1 module in 13ms
+$ tsc --noEmit bad.ts  ->  error TS2322: Type 'string' is not assignable to type 'number'
+```
+
+Bun is doing three jobs in this repo — package manager, test runner, and (through Vite)
+transpiler. Type *checking* is not one of them, and `tsc --noEmit` is the only thing
+performing it.
+
+That matters here more than in a typical frontend. `ui/src/bindings/` is **generated from
+Rust**, so `tsc --noEmit` is what catches the bindings drifting out of step with the
+backend types — the same drift CI guards against by regenerating them. Without it a
+frontend that is type-incoherent with the engine builds and ships in silence, which is
+exactly the failure the typed-port thesis exists to prevent.
+
+**Do not drop `tsc` from the build to make it faster.** If the cost ever matters, the
+replacement is a faster *type checker* (the native TypeScript port), not removing the
+check.
 
 ### Hardware facts about the dev box (`Noook`)
 
