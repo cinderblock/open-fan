@@ -51,9 +51,16 @@ pub use settings::{UpdateSettings, load as load_settings, save as save_settings}
 ///
 /// Compiled in and never taken from a request. Overridable at *build* time only, so a
 /// fork or a test build can point elsewhere without that becoming a runtime input.
+///
+/// A release *asset* rather than a file in the repository, for two reasons. It always
+/// resolves to the newest published release without anything having to be committed, and
+/// — more usefully — GitHub does not serve assets of a **draft** release. So a release
+/// can be built, signed and inspected while remaining invisible to every installation,
+/// and publishing the draft is the moment it becomes an update. That is a deliberate
+/// gate, not an accident of hosting.
 pub const FEED_URL: &str = match option_env!("OPENFAN_UPDATE_FEED") {
     Some(url) => url,
-    None => "https://raw.githubusercontent.com/cinderblock/open-fan/master/releases/latest.json",
+    None => "https://github.com/cinderblock/open-fan/releases/latest/download/latest.json",
 };
 
 /// The minisign public key releases are signed with.

@@ -86,3 +86,39 @@ fn the_signature_vouches_for_the_version_the_manifest_declares() {
         signature.trusted_comment()
     );
 }
+
+/// The manifest the release workflow writes, parsed and checked as the service would.
+///
+/// Generated locally by `.github/workflows/release.yml`'s own node snippet against real
+/// artifacts. This is the join between two things that are easy to let drift: what CI
+/// emits, and what the service can read.
+#[test]
+fn the_manifest_the_release_workflow_writes_is_one_the_service_accepts() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.latest-test.json");
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        eprintln!("no generated manifest present; skipping");
+        return;
+    };
+
+    let release: of_service::update::Release =
+        serde_json::from_str(&text).expect("the workflow's manifest must deserialise");
+
+    // Same gate a real check applies before a byte is downloaded.
+    of_service::update::decide::should_install("0.0.0-alpha", &release)
+        .expect("a newer release from our own manifest must be installable");
+
+    // And the signature in it must be the one that vouches for the version it names.
+    let signature = keys::signature(&release.signature).expect("manifest signature parses");
+    assert!(
+        keys::version_matches(signature.trusted_comment(), &release.version),
+        "the manifest's signature does not vouch for its own version"
+    );
+
+    let Some((installer, _)) = signed_pair() else {
+        return;
+    };
+    let bytes = std::fs::read(installer).expect("read installer");
+    let key = keys::public_key(of_service::update::PUBLIC_KEY).expect("key");
+    key.verify(&bytes, &signature, false)
+        .expect("the manifest's signature must verify the installer it points at");
+}

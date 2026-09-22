@@ -124,9 +124,53 @@ jobs:
         with:
           path: artifacts
 
+      - name: Write the update manifest
+        # What an installed service fetches to learn a newer version exists. Built from
+        # the artifacts that were just signed, so the version, the file and the signature
+        # cannot drift apart the way they would if this were maintained by hand.
+        #
+        # The signature is the one produced with `--app-version`, so it vouches for the
+        # version named here. The service checks that, which is what stops a tampered or
+        # replayed manifest pairing this version number with an older signed installer.
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+
+          installer=$(find artifacts -name '*-setup.exe' | head -1)
+          signature="$installer.sig"
+
+          if [ ! -f "$installer" ] || [ ! -f "$signature" ]; then
+            echo "::error::expected a signed installer; found '$installer'"
+            exit 1
+          fi
+
+          node -e '
+            const fs = require("fs");
+            const [version, installer, signature] = process.argv.slice(1);
+            const name = require("path").basename(installer);
+            fs.writeFileSync("latest.json", JSON.stringify({
+              version,
+              // The asset URL for *this* tag, not `latest`: a manifest must name the
+              // build it was signed against, or a client could fetch a newer file with
+              // an older signature.
+              url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${version}/${name}`,
+              signature: fs.readFileSync(signature, "utf8").trim(),
+              notes: `OpenFan ${version}`,
+            }, null, 2));
+          ' "$version" "$installer" "$signature"
+
+          echo "--- latest.json ---"
+          cat latest.json
+
       - name: Create the GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          # Draft on purpose: GitHub does not serve assets of a draft release, so
+          # `releases/latest/download/latest.json` stays 404 until this is published.
+          # Nothing updates until a human decides it should.
           draft: true
           generate_release_notes: true
-          files: artifacts/**/*
+          files: |
+            artifacts/**/*
+            latest.json

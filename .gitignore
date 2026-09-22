@@ -27,3 +27,4 @@ desktop.ini
 /local/
 *.log
 src-tauri/binaries/
+.latest-test.json
