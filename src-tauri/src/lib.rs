@@ -12,11 +12,9 @@
 //! Phase 1 scaffold: tray, single-instance, autostart and hide-on-close are wired.
 //! Starting the engine's tick loop and streaming its state to the UI is Phase 2.
 
+mod client;
 pub mod commands;
-pub mod state;
-mod takeover;
 
-use state::AppState;
 use tauri::{
     AppHandle, Manager, WindowEvent,
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -89,8 +87,9 @@ fn attach_parent_console() {}
 
 /// Print what the takeover panel would show, then exit.
 ///
-/// Runs the *same* `survey` the panel calls, so a support report and the interface cannot
-/// disagree about what the machine looks like. Writes nothing to hardware.
+/// Asks the service, so a support report and the interface cannot disagree about what the
+/// machine looks like. Writes nothing to hardware, and needs no elevation — the service
+/// already has it.
 fn diagnose() {
     attach_parent_console();
 
@@ -105,12 +104,30 @@ fn diagnose() {
         out.push('\n');
     };
 
-    let state = AppState::new();
-    let inventory = state.engine.inventory();
-    let report = crate::takeover::survey(&state);
-
     say(format!("OpenFan {} diagnostic", env!("CARGO_PKG_VERSION")));
-    say(format!("backend: {}", inventory.backend));
+
+    let status = crate::client::service_status();
+    say(format!("service: {}", status.summary));
+    if !status.running {
+        // Nothing else can be asked, and saying so beats printing empty sections that
+        // read as "no hardware found".
+        finish(&out);
+        return;
+    }
+
+    match crate::client::inventory() {
+        Ok(inventory) => say(format!("backend: {}", inventory.backend)),
+        Err(e) => say(format!("backend: unavailable ({e})")),
+    }
+
+    let report = match crate::client::contention_report() {
+        Ok(report) => report,
+        Err(e) => {
+            say(format!("contention report unavailable: {e}"));
+            finish(&out);
+            return;
+        }
+    };
 
     say("\nchannels:".to_owned());
     for channel in &report.channels {
@@ -142,10 +159,15 @@ fn diagnose() {
     ));
     say(format!("clear: {}", report.clear));
 
+    finish(&out);
+}
+
+/// Write the report where support instructions can name one path.
+fn finish(out: &str) {
     match diagnostic_path() {
         Some(path) => {
             let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
-            match std::fs::write(&path, &out) {
+            match std::fs::write(&path, out) {
                 Ok(()) => println!("\nwritten to {}", path.display()),
                 Err(e) => println!("\ncould not write {}: {e}", path.display()),
             }
@@ -196,8 +218,6 @@ pub fn run() {
 
             // The control loop starts here, before the window is shown, and keeps
             // running whatever happens to the webview afterwards.
-            app.manage(AppState::new());
-
             // Launched by autostart: come up in the tray without stealing focus.
             if std::env::args().any(|arg| arg == "--minimized")
                 && let Some(window) = app.get_webview_window("main")
@@ -216,16 +236,20 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::hardware_status,
+            // The node catalogue and type inference are pure functions over the document
+            // and stay in-process: asking a service to compute them would add a round
+            // trip and a failure mode for something with neither.
             commands::node_catalogue,
-            commands::inventory,
-            commands::get_graph,
-            commands::set_graph,
-            commands::rescan,
             commands::resolve_types,
-            commands::snapshot,
-            takeover::contention_report,
-            takeover::take_over,
+            // Everything touching hardware or the running graph goes to the service.
+            client::service_status,
+            client::inventory,
+            client::get_graph,
+            client::set_graph,
+            client::rescan,
+            client::snapshot,
+            client::contention_report,
+            client::take_over,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start OpenFan");

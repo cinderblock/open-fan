@@ -36,7 +36,8 @@ pub mod nct6775;
 #[cfg(windows)]
 pub use backend::{ChannelOwnership, SuperIoBackend};
 pub use ffi::{
-    PawnIo, PawnIoError, is_available, library_version, module_cache_dir, module_search_dirs,
+    PawnIo, PawnIoError, is_available, library_version, machine_module_dir, module_cache_dir,
+    module_search_dirs,
 };
 
 #[cfg(not(windows))]

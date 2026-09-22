@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
-  OpenFan requires administrator rights, and asks for them up front rather than
-  discovering the problem later.
+  OpenFan runs **unelevated**, and that is the whole point of the service.
 
-  PawnIO refuses a device handle to an unprivileged process: every call returns
-  E_ACCESSDENIED. That is the whole hardware surface, not just writes — OpenFan cannot
-  read a single temperature without elevation. An unelevated launch would silently fall
-  back to the simulated backend and show a plausible, entirely fictional machine, which
-  is a far worse outcome than a UAC prompt.
+  PawnIO refuses a device handle to an unprivileged process, so something must be
+  elevated to touch the hardware at all — but it is the OpenFan service, which starts at
+  boot as LocalSystem and holds that handle for the machine's lifetime. This window is
+  only a client of it, so asking a person for administrator every time they want to look
+  at a fan curve would be gratuitous.
 
-  See `plans/open-fan.md`, "PawnIO requires an elevated caller".
+  It also restores autostart: Windows will not launch an elevated application from the
+  Run key, so `requireAdministrator` and "start with Windows" were mutually exclusive.
+
+  See `plans/open-fan.md`, "When to elevate".
 -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity type="win32" name="eu.openfan.OpenFan" version="1.0.0.0" />
@@ -36,7 +38,7 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

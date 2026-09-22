@@ -306,11 +306,25 @@ pub fn library_version() -> Result<(u16, u8, u8)> {
     ))
 }
 
-/// The per-user directory holding downloaded module blobs.
+/// The machine-wide directory holding module blobs.
 ///
-/// PawnIO's modules are LGPL-2.1 and not ours to redistribute, so they are fetched from
-/// the upstream release rather than bundled. They land here: a user-writable location
-/// needing no administrator rights and surviving a reinstall of either PawnIO or OpenFan.
+/// **This is the one that matters**, because the engine runs in a service as LocalSystem.
+/// A service's `%LOCALAPPDATA%` is `C:\Windows\System32\config\systemprofile\AppData/// Local`, not the logged-in user's — so a module placed in a per-user directory is
+/// invisible to it, discovery finds no chip, and the service silently falls back to the
+/// simulated backend on a machine with real fans. Which is exactly what happened the
+/// first time the service was started.
+pub fn machine_module_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("ProgramData").map(|base| {
+        std::path::PathBuf::from(base)
+            .join("OpenFan")
+            .join("pawnio-modules")
+    })
+}
+
+/// The per-user directory holding module blobs.
+///
+/// Still searched, because a developer running the tools directly has no reason to need
+/// administrator rights to drop a module somewhere. The service will not see it.
 ///
 /// Deliberately the *local* data directory, not the roaming one. These are signed
 /// binaries matched to the hardware in this machine; syncing them onto a different
@@ -335,6 +349,9 @@ pub fn module_search_dirs() -> Vec<std::path::PathBuf> {
         dirs.push(exe_dir.to_path_buf());
     }
 
+    // Machine-wide before per-user: the service runs as LocalSystem and can only see
+    // the first of those.
+    dirs.extend(machine_module_dir());
     dirs.extend(module_cache_dir());
 
     for install in resolve::install_dirs() {
