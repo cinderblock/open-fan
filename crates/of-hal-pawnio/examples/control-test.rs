@@ -90,21 +90,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     chip.enable_control();
     chip.acquire(&channel.id)?;
 
-    let (mode_held, duty_held) = chip.channel_state(index)?;
-    println!("held:    mode={mode_held:?}  duty={duty_held:.1} %");
+    // From here on the channel is ours, so every path out of this function must release
+    // it. Running the held steps separately and releasing unconditionally means an error
+    // — or a declined confirmation — cannot leave the channel stranded in manual mode
+    // with nobody driving it, which is the exact failure this whole phase exists to avoid.
+    let held = held_steps(&mut chip, index, duty_before);
+    let released = chip.release(&channel.id);
 
-    if mode_held != FanMode::Manual {
-        println!("!! expected Manual after acquire; releasing immediately");
-    }
-    if (duty_held - duty_before).abs() > 0.5 {
-        println!(
-            "!! duty moved {duty_before:.1} -> {duty_held:.1} % on acquire; it should not have"
-        );
-    }
-
-    confirm("Release the channel and restore firmware control?")?;
-
-    chip.release(&channel.id)?;
+    held?;
+    released?;
 
     let (mode_after, duty_after) = chip.channel_state(index)?;
     println!("after:   mode={mode_after:?}  duty={duty_after:.1} %");
@@ -128,13 +122,49 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+/// What happens while we hold the channel.
+///
+/// Split out so the caller can release unconditionally: any `?` in here returns to a
+/// caller that is going to hand the channel back regardless.
+fn held_steps(
+    chip: &mut SuperIoBackend,
+    index: usize,
+    duty_before: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (mode_held, duty_held) = chip.channel_state(index)?;
+    println!("held:    mode={mode_held:?}  duty={duty_held:.1} %");
+
+    if mode_held != FanMode::Manual {
+        println!("!! expected Manual after acquire");
+    }
+    if (duty_held - duty_before).abs() > 0.5 {
+        println!(
+            "!! duty moved {duty_before:.1} -> {duty_held:.1} % on acquire; it should not have"
+        );
+    }
+
+    confirm("Release the channel and restore firmware control?")
+}
+
 /// Stop and wait for an explicit yes. Anything else aborts.
+///
+/// End-of-input is reported as its own failure rather than treated as "no". They are both
+/// safe outcomes, but they mean different things: a declined prompt is a decision, whereas
+/// EOF means there was no console to answer on and the operator never saw the question.
+/// Silently calling that "aborted" sends someone hunting for a mistake they did not make.
 fn confirm(question: &str) -> Result<(), Box<dyn std::error::Error>> {
     print!("\n{question} [yes/N] ");
     std::io::stdout().flush()?;
 
     let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
+    if std::io::stdin().read_line(&mut answer)? == 0 {
+        return Err(
+            "stdin reached end of input: this example needs an interactive \
+                    console. Run it from an elevated terminal rather than launching it \
+                    detached."
+                .into(),
+        );
+    }
 
     if answer.trim().eq_ignore_ascii_case("yes") {
         Ok(())
