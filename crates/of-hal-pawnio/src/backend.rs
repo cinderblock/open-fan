@@ -146,6 +146,30 @@ impl SuperIoBackend {
             .ok_or_else(|| HalError::UnknownChannel(channel.clone()))
     }
 
+    /// The raw register bytes recorded when a channel was acquired, if we hold it.
+    ///
+    /// Exposed for bring-up verification: the meaningful question after a release is
+    /// whether the bytes we put back are the bytes we took, which cannot be checked
+    /// against a value observed at some earlier wall-clock moment — a channel under a
+    /// firmware curve is being changed by the firmware the whole time.
+    pub fn acquired_registers(&self, index: usize) -> Option<(u8, u8)> {
+        self.acquired[index].map(|a| (a.mode_register, a.duty))
+    }
+
+    /// The raw mode and duty register bytes as they are right now.
+    pub fn channel_registers(&self, index: usize) -> of_hal::Result<(u8, u8)> {
+        let bus = self.lpc.lock().map_err(hal_error)?;
+        let mode = self
+            .chip
+            .read_byte(&bus, REG_FAN_MODE[index])
+            .map_err(hal_error)?;
+        let duty = self
+            .chip
+            .read_byte(&bus, REG_PWM_WRITE[index])
+            .map_err(hal_error)?;
+        Ok((mode, duty))
+    }
+
     /// Read the mode and duty a channel is currently configured with.
     pub fn channel_state(&self, index: usize) -> of_hal::Result<(FanMode, f64)> {
         let bus = self.lpc.lock().map_err(hal_error)?;

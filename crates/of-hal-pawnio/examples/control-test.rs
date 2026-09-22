@@ -4,29 +4,43 @@
 //! the first writes on a new chip happen in a small, scripted, interruptible program
 //! rather than inside the control loop.
 //!
-//! What it does, stopping for confirmation between each step:
-//!
-//! 1. Show the channel's current mode and duty, and refuse to continue unless the channel
-//!    is under **firmware** control — otherwise what we would "restore" is some other
-//!    application's manual mode, not the firmware's.
-//! 2. `acquire` — record both register bytes, then switch to manual at the duty the fan is
-//!    already running at. **No speed change should occur.**
-//! 3. `release` — write the recorded bytes back.
-//! 4. Verify the mode and duty match what was there at the start.
-//!
 //! It does **not** write a duty. Proving restore comes first; changing a speed is a
 //! separate, later step.
 //!
+//! # What "restored" means, and what it does not
+//!
+//! The obvious check — that the duty after release equals the duty before acquire — is
+//! **wrong for a channel under a firmware curve**, and the first run of this example
+//! failed on exactly that. Smart Fan IV changes the duty continuously; on this board the
+//! chassis header wanders over tens of raw counts on its own. Comparing a value read
+//! before a human answered a prompt with one read afterwards measures how long the human
+//! took, not whether the restore worked.
+//!
+//! So three things are checked instead, in order of how much they actually prove:
+//!
+//! 1. **The mode register byte is restored exactly** — the whole byte, including the
+//!    firmware's tolerance nibble, compared against what `acquire` recorded.
+//! 2. **The duty register is restored to the byte `acquire` recorded**, sampled
+//!    immediately so the firmware has had the least possible chance to move it.
+//! 3. **The firmware demonstrably takes the channel back** — after release, the duty is
+//!    watched for a few seconds, and a firmware-controlled channel should start moving on
+//!    its own again. This is the only one of the three that proves control was *handed
+//!    back* rather than merely that some bytes were written.
+//!
 //! ```sh
-//! # Run elevated. Default channel is 0.
-//! cargo run -p of-hal-pawnio --example control-test -- 0
+//! # Run from an elevated terminal. Default channel is 0.
+//! .\target\debug\examples\control-test.exe 0
 //! ```
 
 use std::io::Write;
+use std::time::{Duration, Instant};
 
 use of_hal::{Backend, OutputChannel, SensorSource};
 use of_hal_pawnio::SuperIoBackend;
-use of_hal_pawnio::nct6775::FanMode;
+use of_hal_pawnio::nct6775::{FanMode, decode_pwm, mode_from_register};
+
+/// How long to watch for the firmware moving the duty after we hand the channel back.
+const OBSERVE_FOR: Duration = Duration::from_secs(8);
 
 fn main() {
     if let Err(e) = run() {
@@ -42,8 +56,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "0".into())
         .parse()?;
 
-    // The concrete type, not a Box<dyn Backend>: this needs `enable_control` and
-    // `channel_state`, and one handle is enough.
+    // The concrete type, not a Box<dyn Backend>: this needs `enable_control` and the raw
+    // register accessors, and one handle is enough.
     let mut chip = SuperIoBackend::probe_primary()?.ok_or("no supported hardware found")?;
 
     let channels = chip.channels()?;
@@ -85,41 +99,88 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    println!(
+        "\nNote: a firmware curve moves the duty on its own, so the value above will have \
+         drifted by the time you answer. That is expected and is not a restore failure."
+    );
+
     confirm("Acquire this channel? It will switch to manual at its current duty.")?;
 
     chip.enable_control();
     chip.acquire(&channel.id)?;
 
-    // From here on the channel is ours, so every path out of this function must release
-    // it. Running the held steps separately and releasing unconditionally means an error
-    // — or a declined confirmation — cannot leave the channel stranded in manual mode
-    // with nobody driving it, which is the exact failure this whole phase exists to avoid.
-    let held = held_steps(&mut chip, index, duty_before);
+    // What acquire actually recorded. This, not anything read before the prompt, is what
+    // release has to reproduce.
+    let (recorded_mode, recorded_duty) = chip
+        .acquired_registers(index)
+        .ok_or("acquire reported success but recorded nothing")?;
+    println!(
+        "\nrecorded: mode={:#04X} ({:?})  duty={recorded_duty} ({:.1} %)",
+        recorded_mode,
+        mode_from_register(recorded_mode),
+        decode_pwm(recorded_duty)
+    );
+
+    // From here on the channel is ours, so every path out must release it. Releasing
+    // unconditionally means an error — or a declined confirmation — cannot leave the
+    // channel stranded in manual mode with nobody driving it.
+    let held = held_steps(&mut chip, index, recorded_duty);
     let released = chip.release(&channel.id);
 
     held?;
     released?;
 
-    let (mode_after, duty_after) = chip.channel_state(index)?;
-    println!("after:   mode={mode_after:?}  duty={duty_after:.1} %");
+    // Sampled immediately: the firmware may start moving the duty again within
+    // milliseconds, which is precisely what we want it to do.
+    let (mode_after, duty_after) = chip.channel_registers(index)?;
+    println!(
+        "\nafter:   mode={mode_after:#04X} ({:?})  duty={duty_after} ({:.1} %)",
+        mode_from_register(mode_after),
+        decode_pwm(duty_after)
+    );
 
-    let mode_ok = mode_after == mode_before;
-    let duty_ok = (duty_after - duty_before).abs() <= 0.5;
+    let mode_ok = mode_after == recorded_mode;
+    let duty_ok = duty_after == recorded_duty;
+
+    println!(
+        "\nmode register restored exactly: {}",
+        yes_no(mode_ok, recorded_mode, mode_after)
+    );
+    println!(
+        "duty register restored exactly: {}",
+        yes_no(duty_ok, recorded_duty, duty_after)
+    );
+
+    if !mode_ok {
+        return Err(
+            "the mode register was not restored; the channel may not be back under \
+                    firmware control"
+                .into(),
+        );
+    }
+
+    let moved = observe_firmware(&chip, index, duty_after)?;
 
     println!();
-    println!("mode restored: {}", if mode_ok { "yes" } else { "NO" });
-    println!("duty restored: {}", if duty_ok { "yes" } else { "NO" });
-
-    if mode_ok && duty_ok {
-        println!("\nRestore verified. Confirm in another monitor that the firmware curve is back.");
-        Ok(())
+    if moved {
+        println!("Firmware control confirmed: the chip moved the duty on its own after release.");
+    } else if duty_ok {
+        println!(
+            "Registers restored exactly. The duty did not move while watching, which is \
+             normal on a stable temperature — the mode register is the authoritative \
+             evidence here."
+        );
     } else {
-        Err(format!(
-            "restore did not reproduce the original state \
-             (was {mode_before:?}/{duty_before:.1} %, now {mode_after:?}/{duty_after:.1} %)"
+        // Duty differs *and* nothing moved: worth a human look rather than a pass.
+        return Err(format!(
+            "duty register reads {duty_after} but {recorded_duty} was recorded, and the \
+             firmware did not move it while watching. Check the channel in another monitor."
         )
-        .into())
+        .into());
     }
+
+    println!("Confirm in another monitor that this header's firmware curve is back.");
+    Ok(())
 }
 
 /// What happens while we hold the channel.
@@ -129,21 +190,55 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn held_steps(
     chip: &mut SuperIoBackend,
     index: usize,
-    duty_before: f64,
+    recorded_duty: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (mode_held, duty_held) = chip.channel_state(index)?;
-    println!("held:    mode={mode_held:?}  duty={duty_held:.1} %");
+    let (mode_held, duty_held) = chip.channel_registers(index)?;
+    println!(
+        "held:    mode={mode_held:#04X} ({:?})  duty={duty_held} ({:.1} %)",
+        mode_from_register(mode_held),
+        decode_pwm(duty_held)
+    );
 
-    if mode_held != FanMode::Manual {
+    if mode_from_register(mode_held) != FanMode::Manual {
         println!("!! expected Manual after acquire");
     }
-    if (duty_held - duty_before).abs() > 0.5 {
-        println!(
-            "!! duty moved {duty_before:.1} -> {duty_held:.1} % on acquire; it should not have"
-        );
+    // Against what was recorded, not against a pre-prompt reading: taking the channel
+    // must not change the speed it is running at.
+    if duty_held != recorded_duty {
+        println!("!! duty changed on acquire ({recorded_duty} -> {duty_held}); it should not have");
     }
 
     confirm("Release the channel and restore firmware control?")
+}
+
+/// Watch for the firmware moving the duty, which is the real proof it has the channel.
+fn observe_firmware(
+    chip: &SuperIoBackend,
+    index: usize,
+    from: u8,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    println!("\nwatching {OBSERVE_FOR:?} for the firmware to move the duty...");
+
+    let deadline = Instant::now() + OBSERVE_FOR;
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(500));
+        let (_, duty) = chip.channel_registers(index)?;
+        if duty != from {
+            println!("  duty moved {from} -> {duty} without us writing anything");
+            return Ok(true);
+        }
+    }
+
+    println!("  duty held steady at {from}");
+    Ok(false)
+}
+
+fn yes_no(ok: bool, expected: u8, actual: u8) -> String {
+    if ok {
+        "yes".to_owned()
+    } else {
+        format!("NO (expected {expected:#04X}, read {actual:#04X})")
+    }
 }
 
 /// Stop and wait for an explicit yes. Anything else aborts.
