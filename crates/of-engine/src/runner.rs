@@ -47,6 +47,7 @@ enum Command {
     SetGraph(Graph, Sender<Result<(), Vec<GraphError>>>),
     SetPolicy(SafetyPolicy),
     Rescan,
+    EnableControl,
     /// Who is driving each channel. Answered between ticks like everything else, so it
     /// cannot interleave with an evaluation in progress.
     ChannelControls(Sender<Vec<(ChannelId, ChannelControl)>>),
@@ -147,6 +148,14 @@ impl EngineHandle {
 
     pub fn rescan(&self) {
         let _ = self.commands.send(Command::Rescan);
+    }
+
+    /// Permit the backend to drive hardware.
+    ///
+    /// Fire-and-forget like the other one-way commands: it is applied between ticks, and
+    /// the caller's next action goes through the same queue behind it.
+    pub fn enable_control(&self) {
+        let _ = self.commands.send(Command::EnableControl);
     }
 
     /// Who is driving each channel.
@@ -268,6 +277,7 @@ fn run_loop(
                     engine.rescan();
                     *published.inventory.lock() = engine.inventory();
                 }
+                Ok(Command::EnableControl) => engine.enable_control(),
                 Ok(Command::ChannelControls(reply)) => {
                     let _ = reply.send(engine.channel_controls());
                 }

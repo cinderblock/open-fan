@@ -16,6 +16,8 @@ import type { HardwareInventory } from './bindings/HardwareInventory';
 import type { NodeDescriptor } from './bindings/NodeDescriptor';
 import type { PortTypeDto } from './bindings/PortTypeDto';
 import type { SnapshotDto } from './bindings/SnapshotDto';
+import type { ContentionReport } from './bindings/ContentionReport';
+import type { TakeoverResult } from './bindings/TakeoverResult';
 import type { ValidationError } from './bindings/ValidationError';
 
 export type { Graph, HardwareInventory, NodeDescriptor, SnapshotDto, ValidationError };
@@ -64,3 +66,21 @@ export async function setGraph(graph: Graph): Promise<ApplyResult> {
     return { ok: false, errors: [{ message: String(raw), nodeId: null }] };
   }
 }
+
+
+export type { ContentionReport, TakeoverResult };
+export type { ChannelControlDto } from './bindings/ChannelControlDto';
+export type { ChannelControlEntry } from './bindings/ChannelControlEntry';
+export type { ContendingAppDto } from './bindings/ContendingAppDto';
+
+/** What currently stands between OpenFan and control of this machine's fans. */
+export const contentionReport = () => invoke<ContentionReport>('contention_report');
+
+/**
+ * Stand rival controllers down and return abandoned channels to the board firmware.
+ *
+ * `force` permits terminating an application that will not exit politely. Left off by
+ * default and worth keeping off: a terminated program runs no shutdown code, so it
+ * restores nothing it was controlling.
+ */
+export const takeOver = (force: boolean) => invoke<TakeoverResult>('take_over', { force });

@@ -44,6 +44,7 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use of_contention::{Politeness, Role, StopOutcome};
+use of_hal::OutputChannel as _;
 use of_hal_pawnio::SuperIoBackend;
 use of_hal_pawnio::nct6775::FanMode;
 

@@ -671,3 +671,149 @@ body {
 .edge--delayed .react-flow__edge-textbg {
   fill: var(--bg);
 }
+
+/* --- Takeover panel -------------------------------------------------------------
+   Colour is never the only signal: every state also carries a word, because "which
+   shade of amber is that" is not a question a user should have to answer about their
+   cooling. */
+.takeover {
+  border-top: 1px solid var(--edge, #2a2f3a);
+  padding: 0.75rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.takeover h2 {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.takeover h3 {
+  font-size: 0.8rem;
+  margin: 0.4rem 0 0;
+  opacity: 0.8;
+}
+
+.takeover__muted {
+  opacity: 0.65;
+}
+
+.takeover__ok {
+  color: #7ddc9a;
+  margin: 0;
+}
+
+.takeover__warn {
+  color: #f2c14e;
+  margin: 0;
+}
+
+.takeover__error {
+  color: #f2777a;
+  margin: 0;
+}
+
+.takeover__channels,
+.takeover__apps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.takeover__channel {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.takeover__channel--warn .takeover__channel-state {
+  color: #f2c14e;
+}
+
+.takeover__channel--ok .takeover__channel-state {
+  color: #7ddc9a;
+}
+
+.takeover__channel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.takeover__channel-state {
+  flex: none;
+  font-variant: small-caps;
+}
+
+.takeover__apps li {
+  padding: 0.3rem 0.4rem;
+  border-left: 2px solid #f2c14e;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.takeover__apps--quiet li {
+  border-left-color: #4a5568;
+}
+
+.takeover__apps p {
+  margin: 0.2rem 0 0;
+  opacity: 0.7;
+  font-size: 0.78rem;
+}
+
+.takeover__action {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.3rem;
+}
+
+/* The consequence sits above the button on purpose. A user who learns their pump just
+   went to full speed *after* clicking has been ambushed. */
+.takeover__consequence {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(242, 193, 78, 0.1);
+  border: 1px solid rgba(242, 193, 78, 0.35);
+}
+
+.takeover__force {
+  display: block;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.takeover__result {
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.takeover__result--ok {
+  border-left: 2px solid #7ddc9a;
+}
+
+.takeover__result--warn {
+  border-left: 2px solid #f2c14e;
+}
+
+.takeover__result ol {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.takeover__refresh {
+  align-self: flex-start;
+}

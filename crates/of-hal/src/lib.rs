@@ -127,6 +127,17 @@ pub trait OutputChannel {
     /// because releasing would leave the chip in manual mode with nobody driving it.
     fn can_restore_firmware_control(&self) -> bool;
 
+    /// Permit this backend to write to the hardware.
+    ///
+    /// Backends that gate writes start refusing them, so enabling control is an explicit,
+    /// greppable act rather than something that becomes possible by accident. Backends
+    /// with nothing to gate — a simulation, say — can ignore this.
+    ///
+    /// There is deliberately no way to *revoke* it. A backend that stopped accepting
+    /// writes half way through would strand whatever it was already driving, which is
+    /// worse than never having started.
+    fn enable_control(&mut self) {}
+
     /// Who is driving this channel right now.
     ///
     /// Defaults to [`ChannelControl::Unknown`], which is the honest answer for a backend

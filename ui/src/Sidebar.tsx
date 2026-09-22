@@ -15,6 +15,7 @@ import type {
   ValidationError,
 } from './api';
 import NodeInspector, { type DeviceHint } from './NodeInspector';
+import TakeoverPanel from './TakeoverPanel';
 import { kindTag } from './graph';
 import type { NodeCategory } from './bindings/NodeCategory';
 import type { Quantity } from './bindings/Quantity';
@@ -141,6 +142,8 @@ export default function Sidebar({
       </header>
 
       <EngineStatus snapshot={snapshot} hardware={hardware} />
+
+      <TakeoverPanel />
 
       <div className="sidebar__actions">
         <button

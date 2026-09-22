@@ -310,6 +310,15 @@ impl Engine {
     }
 
     /// Channels currently under our control.
+    /// Permit the backend to write to the hardware.
+    ///
+    /// Separate from starting the engine on purpose. The loop can run, read every sensor
+    /// and evaluate the whole graph without ever being allowed to drive a fan, which is
+    /// what makes "look before you touch" the default rather than a discipline.
+    pub fn enable_control(&mut self) {
+        self.backend.enable_control();
+    }
+
     /// Who is driving each of the backend's channels right now.
     ///
     /// Used by the takeover flow to tell a channel the firmware is handling from one

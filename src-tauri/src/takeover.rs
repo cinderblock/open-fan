@@ -137,6 +137,11 @@ pub fn take_over(state: tauri::State<'_, AppState>, force: bool) -> TakeoverResu
         };
     }
 
+    // The takeover is the moment the user asks OpenFan to touch their fans, so it is
+    // where control is switched on — not at startup. Until here the app has read
+    // everything and written nothing.
+    state.engine.enable_control();
+
     // --- stop the rivals -------------------------------------------------------------
     let limit = if force {
         Politeness::Terminate

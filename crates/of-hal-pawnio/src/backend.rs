@@ -3,9 +3,10 @@
 //! # Control is opt-in
 //!
 //! Sensor reading is complete and validated against real hardware. Control is implemented
-//! but **disabled until [`enable_control`](SuperIoBackend::enable_control) is called**,
-//! and the application does not call it. Writing a PWM register should never become
-//! possible by accident, and "who turned on fan control" should be greppable.
+//! but **disabled until [`OutputChannel::enable_control`] is called**. The application
+//! calls it when the user asks for a takeover — never at startup — so an OpenFan that is
+//! merely running has read everything and written nothing. Writing a PWM register should
+//! not become possible by accident, and "who turned on fan control" should be greppable.
 //!
 //! # The order that makes a mistake recoverable
 //!
@@ -153,24 +154,9 @@ impl SuperIoBackend {
     /// Probe the primary LPC slot, returning the concrete type.
     ///
     /// [`Discovery::discover`] hands back a `Box<dyn Backend>`, which is what the engine
-    /// wants but hides [`enable_control`](Self::enable_control) and
-    /// [`channel_state`](Self::channel_state). Bring-up tooling needs both.
+    /// wants but hides the raw register accessors. Bring-up tooling needs those.
     pub fn probe_primary() -> of_hal::Result<Option<Self>> {
         Self::probe(Slot::Primary).map_err(hal_error)
-    }
-
-    /// Permit this backend to write PWM registers.
-    ///
-    /// Off by default, and deliberately an explicit call rather than a constructor
-    /// argument or an environment variable: enabling fan control is a decision, and it
-    /// should be greppable. The app does not call this yet — during bring-up only the
-    /// supervised `control-test` example does.
-    pub fn enable_control(&mut self) {
-        tracing::warn!(
-            chip = self.model.name,
-            "PWM control enabled; this backend can now write fan registers"
-        );
-        self.control_enabled = true;
     }
 
     pub fn control_enabled(&self) -> bool {
@@ -535,6 +521,18 @@ impl OutputChannel for SuperIoBackend {
         // recording, because it is the only copy of the firmware's configuration.
         self.acquired[index] = None;
         Ok(())
+    }
+
+    /// Permit this backend to write PWM registers.
+    ///
+    /// Off by default: enabling fan control is a decision, and it should be greppable.
+    /// The application turns it on when the user asks for a takeover, never at startup.
+    fn enable_control(&mut self) {
+        tracing::warn!(
+            chip = self.model.name,
+            "PWM control enabled; this backend can now write fan registers"
+        );
+        self.control_enabled = true;
     }
 
     fn control_of(&self, channel: &ChannelId) -> of_hal::Result<of_hal::ChannelControl> {
