@@ -760,6 +760,65 @@ have caught it; verifying that the edit landed would have. Two follow-ups:
   AIO pump deliberately held at 23 % which jumped to 100 %. A takeover that changes a
   user's fan behaviour must say so *before* acting, not after.
 
+### Update signing: keys, where they live, and what they protect
+
+Generated 2026-09-22.
+
+| | |
+| --- | --- |
+| Public half | compiled into `of_service::update::PUBLIC_KEY`, committed. **Not secret** — it is what users verify *against*. |
+| Private half | repository secret `TAURI_SIGNING_PRIVATE_KEY` |
+| Password | repository secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, 43 random characters |
+| On this machine | `%USERPROFILE%\.openfan-signing\` — **outside the working tree**, and verified absent from anything tracked |
+
+Key ID `D110467E2F9527DB`.
+
+**Back up the private key and its password somewhere durable.** Losing them means no
+future release can be signed, and an unsigned release is one that no existing installation
+will accept — every user stops updating, permanently, with no way to recover except
+manually reinstalling a build carrying a new key. The GitHub secret is *write-only*: it
+cannot be read back out, so the copy in `%USERPROFILE%\.openfan-signing\` and whatever
+backup exists are the only copies.
+
+**The public key is deliberately not configurable at runtime.** It is the single thing
+between "the service installs an update" and "the service installs whatever an attacker
+served", so it must not be reachable from a request, a configuration file, or an
+environment variable read at start-up. The build-time override exists only so a fork can
+sign with its own key.
+
+**Two formats, both accepted.** `tauri signer` emits base64-wrapped minisign files — the
+public key is base64 of a two-line `.pub`, a signature is base64 of a four-line
+`.minisig`. `minisign-verify` wants the unwrapped text. Getting that wrong does *not* fail
+loudly: it fails as "signature verification failed" on a perfectly good release, which
+looks exactly like an attack and sends you hunting in the wrong place. `update::keys`
+tries both rather than guessing from shape, so a release signed with plain `minisign`
+also verifies. The project's real public key is a test fixture, so if it ever stops
+parsing that is a test failure rather than a broken release.
+
+**A signature alone is not enough, and this is the interesting part.** It proves the bytes
+are ours; it does not prove they are the version the feed announced — and the feed is a
+plain JSON file whoever serves it controls. An attacker who can tamper with or merely
+*replay* the manifest could announce `9.9.9` while serving a genuinely signed older
+installer: the signature verifies, the version comparison passes, and the machine is
+rolled back to a build whose flaws are known.
+
+So CI signs with `--app-version`, which writes the version into the signature's **trusted**
+comment — covered by the signature, therefore not editable without invalidating it — and
+the service checks the manifest's claim against it. A signature carrying no version is
+refused rather than accepted, because treating "no claim" as "any claim" makes the check
+bypassable by deleting it.
+
+**Signed as an explicit CI step**, not via `createUpdaterArtifacts`, which insists on a
+`plugins.updater` configuration for a plugin we deliberately do not use. The service does
+the updating with its own key; configuring an unregistered plugin would be pretending
+otherwise. CI also fails early when the signing secret is missing: a release that quietly
+ships unsigned is worse than one that does not ship, because the service refuses
+unverified code and those artifacts would reach users who then silently never update.
+
+**Verified end to end**, against the actual 4 MB installer this repository builds: key
+parses, signature verifies, trusted comment vouches for the declared version. The test
+skips when nothing is built, so it is free on a clean checkout.
+
 ### Self-update: two paths, and why the silent one is the constrained one
 
 Implemented 2026-09-22, after the service made a genuinely prompt-free update possible.
@@ -1029,11 +1088,10 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   launch an elevated application; it needs a scheduled task with highest privileges, or
   the service host from Open Question 2. Not broken today only because autostart is never
   enabled.
-- **Generate an update signing key and sign releases.** Until then `verifiable` is
-  `false` and neither update path will install anything — which is correct, but it means
-  self-update does not yet work on a user's machine. Needs the key generated, the public
-  half compiled in via `OPENFAN_UPDATE_PUBKEY`, `createUpdaterArtifacts`, and a
-  `latest.json` published at the feed URL.
+- **Publish `latest.json` at the feed URL.** The signing key exists, CI signs, and the
+  service verifies — but nothing serves a manifest yet, so a check finds nothing. Needs
+  the release workflow to write `{version, url, signature, notes}` from the artifacts it
+  just signed, and to publish it where `update::FEED_URL` points.
 - **Move the takeover sequence into a library crate and test it.** It currently lives in
   the `takeover` example, where `cargo test` never runs its assertions — so the guard that
   refuses to restore firmware control under a live controller has no coverage, and was
