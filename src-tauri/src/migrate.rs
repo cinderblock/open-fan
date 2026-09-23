@@ -56,6 +56,20 @@ pub fn migration_survey() -> Result<MigrationSurvey, String> {
 
     let configs = find_configs();
 
+    // Translated here rather than behind a button. We have already found the file, and
+    // reading it changes nothing about the machine — the consent that matters is on
+    // applying the result, which stays a separate, explicit step. Asking somebody to
+    // click twice to see what we could have shown them is friction that buys no safety.
+    let (imported, import_error) = match configs.first() {
+        None => (None, None),
+        Some(config) => match import_foreign_config(config.path.clone()) {
+            Ok(profile) => (Some(profile), None),
+            // A configuration we located but could not translate is worth saying out
+            // loud: the alternative is an empty panel that looks like we found nothing.
+            Err(e) => (None, Some(e)),
+        },
+    };
+
     Ok(MigrationSurvey {
         nothing_else_here: contention.apps.is_empty()
             && autostart.is_empty()
@@ -64,6 +78,8 @@ pub fn migration_survey() -> Result<MigrationSurvey, String> {
         contention,
         autostart,
         configs,
+        imported,
+        import_error,
     })
 }
 
@@ -76,11 +92,6 @@ pub fn autostart_summary() -> Result<(usize, Vec<of_ipc::AutostartEntryDto>), St
         Response::AutostartSurvey { entries, examined } => Ok((examined, entries)),
         other => Err(format!("unexpected answer: {other:?}")),
     }
-}
-
-/// Configurations found on disk, for the diagnostic report.
-pub fn found_configs() -> Vec<ForeignConfigDto> {
-    find_configs()
 }
 
 /// Switch off one startup entry the service found. **Explicit, one at a time.**

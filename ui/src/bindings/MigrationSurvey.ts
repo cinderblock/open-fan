@@ -2,6 +2,7 @@
 import type { AutostartEntryDto } from "./AutostartEntryDto";
 import type { ContentionReport } from "./ContentionReport";
 import type { ForeignConfigDto } from "./ForeignConfigDto";
+import type { ImportedProfileDto } from "./ImportedProfileDto";
 
 /**
  * Everything OpenFan knows about the other fan-control software on this machine.
@@ -22,6 +23,20 @@ autostart: Array<AutostartEntryDto>,
  * Configurations found on disk that could be imported.
  */
 configs: Array<ForeignConfigDto>, 
+/**
+ * The best of those, already translated.
+ *
+ * Done during the survey rather than behind a button. Reading a file we have
+ * already located changes nothing about the machine, so making somebody ask for
+ * it twice is friction that buys no safety — the consent that matters is on
+ * *applying* the result, which is still a separate, explicit step.
+ */
+imported: ImportedProfileDto | null, 
+/**
+ * Why the translation did not happen, when a configuration was found but could
+ * not be read. Reported rather than silently leaving `imported` empty.
+ */
+importError: string | null, 
 /**
  * True when no other fan-control software is running, scheduled to run, or
  * installed — the clean-machine case.

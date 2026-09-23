@@ -174,12 +174,43 @@ fn diagnose() {
     }
 
     say("\nother fan-control configurations found:".to_owned());
-    let configs = crate::migrate::found_configs();
-    if configs.is_empty() {
-        say("  (none)".to_owned());
-    }
-    for config in &configs {
-        say(format!("  {:<22} {}", config.name, config.path));
+    match crate::migrate::migration_survey() {
+        Ok(survey) => {
+            if survey.configs.is_empty() {
+                say("  (none)".to_owned());
+            }
+            for config in &survey.configs {
+                say(format!("  {:<22} {}", config.name, config.path));
+            }
+
+            // The translation itself, because "we found a file" and "we could make
+            // something of it" are different answers and only the second is useful.
+            match (&survey.imported, &survey.import_error) {
+                (Some(profile), _) => {
+                    let outputs = profile
+                        .graph
+                        .nodes
+                        .values()
+                        .filter(|n| matches!(n.kind, of_ipc::NodeKind::FanOutput { .. }))
+                        .count();
+                    say(format!(
+                        "  translated: {outputs} channels driven, {} notes, {} fans measured",
+                        profile.notes.len(),
+                        profile.calibration.len()
+                    ));
+                    for note in profile
+                        .notes
+                        .iter()
+                        .filter(|n| n.fidelity == "needs-attention")
+                    {
+                        say(format!("    check: {} — {}", note.subject, note.detail));
+                    }
+                }
+                (None, Some(e)) => say(format!("  could not translate it: {e}")),
+                (None, None) => {}
+            }
+        }
+        Err(e) => say(format!("  unavailable ({e})")),
     }
 
     finish(&out);

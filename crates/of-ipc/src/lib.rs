@@ -608,6 +608,16 @@ dto! {
         pub autostart: Vec<AutostartEntryDto>,
         /// Configurations found on disk that could be imported.
         pub configs: Vec<ForeignConfigDto>,
+        /// The best of those, already translated.
+        ///
+        /// Done during the survey rather than behind a button. Reading a file we have
+        /// already located changes nothing about the machine, so making somebody ask for
+        /// it twice is friction that buys no safety — the consent that matters is on
+        /// *applying* the result, which is still a separate, explicit step.
+        pub imported: Option<ImportedProfileDto>,
+        /// Why the translation did not happen, when a configuration was found but could
+        /// not be read. Reported rather than silently leaving `imported` empty.
+        pub import_error: Option<String>,
         /// True when no other fan-control software is running, scheduled to run, or
         /// installed — the clean-machine case.
         pub nothing_else_here: bool,
