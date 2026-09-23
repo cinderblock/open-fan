@@ -138,3 +138,12 @@ export const applyUpdatePrompted = () => invoke<string>('apply_update_prompted')
  * machine-wide to put the file, and the one that will use it.
  */
 export const fetchHardwareModule = () => invoke<string>('fetch_hardware_module');
+
+/**
+ * Whether the OpenFan *window* opens at sign-in.
+ *
+ * Only the window. The service starts at boot regardless, which is what keeps fans
+ * managed before anyone logs in — this is about whether the tray icon is there.
+ */
+export const autostartEnabled = () => invoke<boolean>('autostart_enabled');
+export const setAutostart = (enabled: boolean) => invoke<boolean>('set_autostart', { enabled });

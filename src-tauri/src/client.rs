@@ -267,3 +267,30 @@ pub fn fetch_hardware_module() -> Result<String, String> {
         Err(e) => Err(e.to_string()),
     }
 }
+
+/// Whether this window opens at sign-in.
+///
+/// Only the window: the service starts at boot regardless, which is what keeps the fans
+/// managed before anyone logs in. This is about whether the tray icon is there.
+///
+/// It became possible at all when the window stopped requiring administrator — Windows
+/// will not launch an elevated application from the Run key, so "start with Windows" and
+/// `requireAdministrator` were mutually exclusive.
+#[tauri::command]
+pub fn autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt as _;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt as _;
+
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| e.to_string())?;
+    } else {
+        manager.disable().map_err(|e| e.to_string())?;
+    }
+    manager.is_enabled().map_err(|e| e.to_string())
+}

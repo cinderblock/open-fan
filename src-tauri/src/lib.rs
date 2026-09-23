@@ -1,16 +1,15 @@
 //! The OpenFan desktop shell.
 //!
-//! This layer owns the tray icon, the window lifecycle and the bridge to the control
-//! engine. It owns **no control decisions**. Closing the window hides it rather than
-//! quitting, the engine keeps ticking, and the fans keep being managed whether or not a
-//! webview exists. That separation is the reason the engine lives in `of-engine` as a
-//! plain library: it can be hosted here today and by a Windows service later without the
-//! safety-critical code moving.
+//! The tray icon, the window lifecycle, and a client of the service. It owns **no control
+//! decisions and no hardware** — fan control runs in the OpenFan service, which started at
+//! boot, holds the elevated handle, and keeps running whether or not this window exists.
 //!
-//! # Status
+//! That makes this process genuinely disposable: it can be closed, crashed, killed, or
+//! never started, and the fans carry on. Closing the window still hides rather than quits,
+//! but only so the tray icon survives — nothing about cooling depends on it any more.
 //!
-//! Phase 1 scaffold: tray, single-instance, autostart and hide-on-close are wired.
-//! Starting the engine's tick loop and streaming its state to the UI is Phase 2.
+//! The split was cheap because `of-engine` was always a plain library with no opinion
+//! about its host, which was the point of writing it that way.
 
 mod client;
 pub mod commands;
@@ -51,13 +50,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_editor(app),
             "quit" => {
-                // Phase 4 hooks the dying breath in here: every controlled channel must
-                // be handed back to the firmware before the process goes away. Quitting
-                // is the one exit path we fully control, so it must be the cleanest.
-                tracing::info!("quit requested from tray");
-                // Dropping the state joins the control thread, which hands every
-                // channel back before the process goes away. Phase 4 extends this to
-                // the Windows shutdown and logoff paths.
+                // Closes the window and the tray icon. It does **not** stop fan control:
+                // that lives in the service and keeps running, which is the whole point
+                // of the split. Stopping control is done through the service, which is
+                // an administrative act on purpose.
+                tracing::info!("quit requested from tray; fan control continues");
                 app.exit(0);
             }
             other => tracing::warn!(id = other, "unhandled tray menu item"),
@@ -256,6 +253,8 @@ pub fn run() {
             client::apply_update_silently,
             client::apply_update_prompted,
             client::fetch_hardware_module,
+            client::autostart_enabled,
+            client::set_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start OpenFan");

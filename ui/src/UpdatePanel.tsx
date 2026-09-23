@@ -22,18 +22,22 @@ import {
   type UpdateStatus,
   applyUpdatePrompted,
   applyUpdateSilently,
+  autostartEnabled,
   checkForUpdate,
   setAutoUpdate,
+  setAutostart,
   updateStatus,
 } from './api';
 
 export default function UpdatePanel() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [autostart, setAutostartState] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setStatus(await updateStatus().catch(() => null));
+    setAutostartState(await autostartEnabled().catch(() => null));
   }, []);
 
   useEffect(() => {
@@ -151,6 +155,25 @@ export default function UpdatePanel() {
       </div>
 
       {note && <p className="takeover__muted">{note}</p>}
+
+      <h3>Startup</h3>
+      <label className="takeover__force">
+        <input
+          type="checkbox"
+          checked={autostart ?? false}
+          disabled={busy !== null || autostart === null}
+          onChange={(e) => run('autostart', () => setAutostart(e.target.checked))}
+        />
+        Open this window when I sign in
+        {/* Worth saying, because the obvious reading is wrong: this is not what keeps
+            the fans controlled. The service does that, from boot, whether or not anyone
+            signs in. */}
+        <span className="takeover__muted">
+          {' '}
+          — only the window. Fan control runs in the background service and starts with
+          the machine either way.
+        </span>
+      </label>
     </section>
   );
 }
