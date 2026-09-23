@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "of-config"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "of-core",
  "of-units",
@@ -2495,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "of-contention"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "of-hal",
  "thiserror 2.0.20",
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "of-core"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "of-units",
  "petgraph",
@@ -2517,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "of-engine"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "of-core",
  "of-hal",
@@ -2530,21 +2530,21 @@ dependencies = [
 
 [[package]]
 name = "of-hal"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "of-hal-mock"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "of-hal",
 ]
 
 [[package]]
 name = "of-hal-pawnio"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "directories",
  "libloading 0.9.0",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "of-ipc"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "of-core",
  "of-units",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "of-rpc"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "of-core",
  "of-ipc",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "of-service"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2608,7 +2608,7 @@ dependencies = [
 
 [[package]]
 name = "of-units"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "serde",
  "thiserror 2.0.20",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "open-fan"
-version = "0.1.0"
+version = "0.0.0-alpha"
 dependencies = [
  "directories",
  "glob",
