@@ -298,8 +298,10 @@ mod windows_impl {
             let name = String::from_utf16_lossy(&name[..name_len as usize]);
             // Registry strings are UTF-16 and usually, but not always, NUL-terminated.
             let units: Vec<u16> = data[..data_len as usize]
-                .chunks_exact(2)
-                .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|p| u16::from_le_bytes(*p))
                 .take_while(|&c| c != 0)
                 .collect();
             out.push((name, String::from_utf16_lossy(&units)));
@@ -436,8 +438,10 @@ mod windows_impl {
         match bytes {
             [0xFF, 0xFE, rest @ ..] => String::from_utf16_lossy(
                 &rest
-                    .chunks_exact(2)
-                    .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|p| u16::from_le_bytes(*p))
                     .collect::<Vec<_>>(),
             ),
             _ => String::from_utf8_lossy(bytes).into_owned(),
@@ -455,8 +459,10 @@ mod windows_impl {
 
         let narrow = String::from_utf8_lossy(&bytes).into_owned();
         let wide: String = bytes
-            .chunks_exact(2)
-            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|p| u16::from_le_bytes(*p))
             .filter(|&c| c != 0)
             .filter_map(|c| char::from_u32(u32::from(c)))
             .collect();
