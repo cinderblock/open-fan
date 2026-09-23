@@ -15,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod import;
 pub mod presets;
 
 use of_core::Graph;
@@ -76,15 +77,6 @@ pub fn migrate(profile: Profile) -> Result<Profile, ConfigError> {
     }
     // No historical versions to migrate from yet. Each future bump adds a step here.
     Ok(profile)
-}
-
-/// Importers for other tools' configuration formats.
-///
-/// Interoperability only: these parse documented-by-observation on-disk formats. See the
-/// clean-room rules in `plans/open-fan.md` — nothing in this module may derive from
-/// decompiled code.
-pub mod import {
-    // Phase 7.
 }
 
 #[cfg(test)]

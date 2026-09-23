@@ -1,0 +1,302 @@
+{
+  "__VERSION__": "245",
+  "Main": {
+    "Controls": [
+      {
+        "Name": "Chassis Fan",
+        "NickName": "Chassis Fan",
+        "Identifier": "/lpc/nct6798d/control/0",
+        "IsHidden": false,
+        "Enable": true,
+        "SelectedFanCurve": null,
+        "SelectedOffset": 0,
+        "PairedFanSensor": {
+          "Identifier": "/lpc/nct6798d/fan/0"
+        },
+        "SelectedStart": 9,
+        "SelectedStop": 6,
+        "MinimumPercent": 0,
+        "SelectedCommandStepUp": 8,
+        "SelectedCommandStepDown": 8,
+        "ManualControlValue": 50,
+        "ManualControl": false,
+        "ForceApply": false,
+        "Calibration": [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            258
+          ],
+          [
+            10,
+            279
+          ],
+          [
+            20,
+            642
+          ],
+          [
+            30,
+            977
+          ],
+          [
+            40,
+            1320
+          ],
+          [
+            50,
+            1609
+          ],
+          [
+            60,
+            1891
+          ],
+          [
+            70,
+            2145
+          ],
+          [
+            80,
+            2422
+          ],
+          [
+            90,
+            2672
+          ],
+          [
+            100,
+            2928
+          ]
+        ]
+      },
+      {
+        "Name": "CPU Fan",
+        "NickName": "CPU Fan",
+        "Identifier": "/lpc/nct6798d/control/1",
+        "IsHidden": true,
+        "Enable": false,
+        "SelectedFanCurve": null,
+        "SelectedOffset": 0,
+        "PairedFanSensor": null,
+        "SelectedStart": 0,
+        "SelectedStop": 0,
+        "MinimumPercent": 0,
+        "SelectedCommandStepUp": 8,
+        "SelectedCommandStepDown": 8,
+        "ManualControlValue": 50,
+        "ManualControl": false,
+        "ForceApply": false,
+        "Calibration": []
+      },
+      {
+        "Name": "AIO Pump",
+        "NickName": "AIO Pump",
+        "Identifier": "/lpc/nct6798d/control/4",
+        "IsHidden": false,
+        "Enable": true,
+        "SelectedFanCurve": null,
+        "SelectedOffset": 0,
+        "PairedFanSensor": {
+          "Identifier": "/lpc/nct6798d/fan/4"
+        },
+        "SelectedStart": 0,
+        "SelectedStop": 0,
+        "MinimumPercent": 0,
+        "SelectedCommandStepUp": 8,
+        "SelectedCommandStepDown": 8,
+        "ManualControlValue": 16,
+        "ManualControl": true,
+        "ForceApply": false,
+        "Calibration": [
+          [
+            1,
+            967
+          ],
+          [
+            10,
+            969
+          ],
+          [
+            20,
+            1867
+          ],
+          [
+            30,
+            2878
+          ],
+          [
+            40,
+            4006
+          ],
+          [
+            50,
+            4375
+          ],
+          [
+            70,
+            4401
+          ],
+          [
+            90,
+            4401
+          ],
+          [
+            100,
+            4455
+          ]
+        ]
+      },
+      {
+        "Name": "Control 1 - NVIDIA GeForce RTX 3090",
+        "NickName": "Control 1 - NVIDIA GeForce RTX 3090",
+        "Identifier": "NVApiWrapper/0-GA102-A/control/0",
+        "IsHidden": true,
+        "Enable": false,
+        "SelectedFanCurve": null,
+        "SelectedOffset": 0,
+        "PairedFanSensor": {
+          "Identifier": "NVApiWrapper/0-GA102-A/fan/0"
+        },
+        "SelectedStart": 0,
+        "SelectedStop": 0,
+        "MinimumPercent": 0,
+        "SelectedCommandStepUp": 8,
+        "SelectedCommandStepDown": 8,
+        "ManualControlValue": 50,
+        "ManualControl": false,
+        "ForceApply": false,
+        "Calibration": [
+          [
+            90,
+            0
+          ],
+          [
+            100,
+            0
+          ]
+        ]
+      },
+      {
+        "Name": "Control 2 - NVIDIA GeForce RTX 3090",
+        "NickName": "Control 2 - NVIDIA GeForce RTX 3090",
+        "Identifier": "NVApiWrapper/0-GA102-A/control/1",
+        "IsHidden": true,
+        "Enable": false,
+        "SelectedFanCurve": null,
+        "SelectedOffset": 0,
+        "PairedFanSensor": {
+          "Identifier": "NVApiWrapper/0-GA102-A/fan/1"
+        },
+        "SelectedStart": 0,
+        "SelectedStop": 0,
+        "MinimumPercent": 0,
+        "SelectedCommandStepUp": 8,
+        "SelectedCommandStepDown": 8,
+        "ManualControlValue": 50,
+        "ManualControl": false,
+        "ForceApply": false,
+        "Calibration": [
+          [
+            90,
+            0
+          ],
+          [
+            100,
+            0
+          ]
+        ]
+      }
+    ],
+    "CustomSensors": [],
+    "Fahrenheit": false,
+    "FanCurves": [
+      {
+        "CommandMode": 0,
+        "Name": "Flat",
+        "IsHidden": false,
+        "Percent": 50
+      }
+    ],
+    "FanSensors": [
+      {
+        "Identifier": "/lpc/nct6798d/fan/0",
+        "IsHidden": false,
+        "Name": "Chassis Fan",
+        "NickName": "Chassis Fan"
+      },
+      {
+        "Identifier": "/lpc/nct6798d/fan/1",
+        "IsHidden": false,
+        "Name": "CPU Fan",
+        "NickName": "CPU Fan"
+      },
+      {
+        "Identifier": "/lpc/nct6798d/fan/4",
+        "IsHidden": false,
+        "Name": "AIO Pump",
+        "NickName": "AIO Pump"
+      },
+      {
+        "Identifier": "/lpc/ec/fan/0",
+        "IsHidden": false,
+        "Name": "VRM Heat Sink Fan",
+        "NickName": "VRM Heat Sink Fan"
+      },
+      {
+        "Identifier": "/lpc/ec/fan/1",
+        "IsHidden": false,
+        "Name": "Chipset Fan",
+        "NickName": "Chipset Fan"
+      },
+      {
+        "Identifier": "NVApiWrapper/0-GA102-A/fan/0",
+        "IsHidden": false,
+        "Name": "Fan 1 - NVIDIA GeForce RTX 3090",
+        "NickName": "Control 1 - NVIDIA GeForce RTX 3090"
+      },
+      {
+        "Identifier": "NVApiWrapper/0-GA102-A/fan/1",
+        "IsHidden": false,
+        "Name": "Fan 2 - NVIDIA GeForce RTX 3090",
+        "NickName": "Control 2 - NVIDIA GeForce RTX 3090"
+      }
+    ],
+    "HideCalibration": false,
+    "HideFanSpeedCards": true,
+    "HorizontalUIOrientation": false,
+    "PrimaryColor": "#FF607D8B",
+    "SecondaryColor": "#FFC6FF00",
+    "SelectedTheme": "",
+    "ShowHiddenCards": true,
+    "SyncThemeWithWindows": true,
+    "SyncTrayIconColorWithWindows": true,
+    "TemperatureSensors": [],
+    "TrayIconColor": null,
+    "TrayIcons": []
+  },
+  "Sensors": {
+    "AdlxWrapperSettings": {
+      "Enabled": true
+    },
+    "DisabledPlugins": [],
+    "DisableStorageSensors": true,
+    "LibreHardwareMonitorSettings": {
+      "Controller": false,
+      "CPU": true,
+      "EmbeddedEC": true,
+      "GPU": true,
+      "Memory": false,
+      "Motherboard": true,
+      "PSU": false,
+      "Storage": false,
+      "ZeroRPMOverride": false
+    },
+    "NvAPIWrapperSettings": {
+      "Enabled": true,
+      "ZeroRPMOverride": false
+    }
+  }
+}
