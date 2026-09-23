@@ -59,9 +59,10 @@ export default function MigrationPanel({ onApplied }: { onApplied?: () => void }
   const load = useCallback(async () => {
     const found = await migrationSurvey().catch(() => null);
     setSurvey(found);
-    // Only worth fetching when there is nothing to migrate from; otherwise the offer to
-    // start from scratch competes with the user's own existing configuration.
-    if (found?.nothingElseHere) setPresets(await starterPresets().catch(() => null));
+    // Always offered, including when there is something to import. Somebody who has an
+    // old configuration and does not want it back still needs a starting point, and
+    // gating the presets on a clean machine left exactly that person with nothing.
+    setPresets(await starterPresets().catch(() => null));
   }, []);
 
   useEffect(() => {
@@ -97,51 +98,11 @@ export default function MigrationPanel({ onApplied }: { onApplied?: () => void }
     <section className="takeover">
       <h2>Getting started</h2>
 
-      {/* --- 1. a machine with nothing else on it ----------------------------------- */}
       {survey.nothingElseHere && (
-        <>
-          <p className="takeover__muted">
-            No other fan-control software is running, installed, or set to start with this
-            machine. Nothing needs taking over.
-          </p>
-
-          {presets && presets.length > 0 && (
-            <>
-              <h3>Start from</h3>
-              <p className="takeover__muted">
-                Built from the fans and sensors this machine actually reports. Any of them
-                is a complete, working configuration you can then change.
-              </p>
-              <ul className="takeover__apps">
-                {presets.map((preset) => (
-                  <li key={preset.id}>
-                    <strong>{preset.name}</strong>
-                    <p>{preset.description}</p>
-                    <button
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() =>
-                        run(
-                          `preset-${preset.id}`,
-                          async () => {
-                            const result = await setGraph(preset.graph);
-                            if (!result.ok) {
-                              throw new Error(result.errors.map((e) => e.message).join('; '));
-                            }
-                            onApplied?.();
-                          },
-                          `Started from "${preset.name}". Nothing is driving a fan until you turn control on.`,
-                        )
-                      }
-                    >
-                      {busy === `preset-${preset.id}` ? 'Loading…' : `Use ${preset.name}`}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </>
+        <p className="takeover__muted">
+          No other fan-control software is running, installed, or set to start with this
+          machine. Nothing needs taking over.
+        </p>
       )}
 
       {/* --- 2. something is set to start with the machine -------------------------- */}
@@ -316,6 +277,46 @@ export default function MigrationPanel({ onApplied }: { onApplied?: () => void }
             </div>
           )}
         </div>
+      )}
+
+      {/* Offered last, because somebody with a configuration to bring across should be
+          shown that first — but offered in every state, since declining an import still
+          leaves a person needing somewhere to start. */}
+      {presets && presets.length > 0 && !preview && (
+        <>
+          <h3>{survey.nothingElseHere ? 'Start from' : 'Or start fresh'}</h3>
+          <p className="takeover__muted">
+            Built from the fans and sensors this machine actually reports. Each one is a
+            complete, working configuration you can then change.
+          </p>
+          <ul className="takeover__apps">
+            {presets.map((preset) => (
+              <li key={preset.id}>
+                <strong>{preset.name}</strong>
+                <p>{preset.description}</p>
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    run(
+                      `preset-${preset.id}`,
+                      async () => {
+                        const result = await setGraph(preset.graph);
+                        if (!result.ok) {
+                          throw new Error(result.errors.map((e) => e.message).join('; '));
+                        }
+                        onApplied?.();
+                      },
+                      `Started from "${preset.name}". Nothing drives a fan until you turn control on.`,
+                    )
+                  }
+                >
+                  {busy === `preset-${preset.id}` ? 'Loading…' : `Use ${preset.name}`}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {note && <p className="takeover__muted">{note}</p>}
