@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2.5.5",
     "@xyflow/react": "^12",
     "react": "^19",
     "react-dom": "^19",

@@ -1,7 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the OpenFan editor window. Deliberately minimal: the window is an editor, and every privileged operation happens in the backend behind an explicit command.",
+  "description": "Permissions for the OpenFan editor window. Deliberately minimal: the window is an editor, and every privileged operation happens in the backend behind an explicit command. The one outward-facing capability is handing a URL to the system browser, scoped to the sites the editor actually links to: the webview has no back button, so a link followed in place is a dead end.",
   "windows": ["main"],
-  "permissions": ["core:default", "autostart:allow-is-enabled", "autostart:allow-enable", "autostart:allow-disable"]
+  "permissions": [
+    "core:default",
+    "autostart:allow-is-enabled",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://reactflow.dev/*" }, { "url": "https://reactflow.dev[?]*" }]
+    }
+  ]
 }

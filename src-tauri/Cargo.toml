@@ -31,6 +31,9 @@ of-ipc = { workspace = true }
 tauri = { version = "2.11.6", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2.4.5"
 tauri-plugin-autostart = "2.5.1"
+# So a link in the editor reaches the system browser instead of trying to navigate a
+# window that has no way back. Scoped in `capabilities/default.json`.
+tauri-plugin-opener = "2.5.5"
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -43,3 +46,7 @@ of-hal-pawnio = { workspace = true }
 # Only so `--diagnose` can reach the terminal that launched it: release builds are a
 # windows-subsystem binary and have no console of their own.
 windows = { workspace = true, features = ["Win32_System_Console", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+# Only to check the opener scope the way the plugin itself does.
+glob = "0.3.4"

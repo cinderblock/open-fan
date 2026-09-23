@@ -699,6 +699,33 @@ exactly the failure the typed-port thesis exists to prevent.
 replacement is a faster *type checker* (the native TypeScript port), not removing the
 check.
 
+### A link in the webview goes nowhere unless it is handed to the browser
+
+Clicking React Flow's "React Flow" attribution badge did nothing. The badge is an ordinary
+`<a target="_blank">`, and a Tauri webview has no answer for that: there are no tabs to open
+one in, and WebView2 declines the new-window request rather than navigating. Every external
+link in this app has the same problem — the badge was just the first one rendered.
+
+Hiding the badge was the other option and is the wrong one here: `proOptions.hideAttribution`
+exists, but xyflow's licence asks that it only be used with a Pro subscription, and OpenFan is
+an MIT project that takes their work for free. So the link stays and is made to work.
+
+The handling is one capture-phase click listener on `document` (`ui/src/external.ts`, installed
+from `main.tsx`), which hands any `http(s)` link off to `tauri-plugin-opener`. Notes for anyone
+adding a link later:
+
+- The allowed URLs live in `src-tauri/capabilities/default.json`, not in the interceptor. A URL
+  outside that scope is refused by the backend and the click does nothing *again* — visible only
+  in a console the window cannot show. `cargo test -p open-fan` pins the attribution URL against
+  the scope so that failure is caught at build time instead of by a user.
+- Scope entries are globs, and `*` matches `/` as well, so `https://example.com*` also matches
+  `https://example.com.evil.test`. Anchor the host: `https://example.com/*`, plus
+  `https://example.com[?]*` if the URL carries a query string (a bare `?` in a glob is a
+  single-character wildcard, which is the same hole).
+- React Flow builds the badge's URL two ways — `?utm_source=attribution` in a release build,
+  `/attribution` in a dev one — so testing this in `tauri dev` exercises a URL the release build
+  never opens. Both are in the scope.
+
 ### Asking another controller to stand down, rather than killing it
 
 Researched from published documentation only — no binary was inspected — and then tested.

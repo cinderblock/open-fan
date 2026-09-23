@@ -267,6 +267,11 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
+        // Links leave the webview rather than navigating it. The window has no back
+        // button, so a link followed in place strands the editor on a web page — and
+        // the webview refuses the navigation anyway. The allowed URLs are listed in
+        // `capabilities/default.json`, not here.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             build_tray(app.handle())?;
 
@@ -319,4 +324,51 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to start OpenFan");
+}
+
+#[cfg(test)]
+mod tests {
+    /// The opener scope, not this file, decides which links may leave the window — and a
+    /// URL it does not cover fails where nobody is looking, in a console the window has
+    /// no way to show. So pin the one link the editor renders today, in both the forms
+    /// React Flow builds it: a query string in a release build, a path in a dev one.
+    #[test]
+    fn opener_scope_covers_every_link_the_editor_renders() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("capability is not valid JSON");
+
+        let allowed: Vec<glob::Pattern> = capability["permissions"]
+            .as_array()
+            .expect("permissions is a list")
+            .iter()
+            .filter(|permission| permission["identifier"] == "opener:allow-open-url")
+            .filter_map(|permission| permission["allow"].as_array())
+            .flatten()
+            .map(|entry| {
+                glob::Pattern::new(entry["url"].as_str().expect("a scope entry has a url"))
+                    .expect("a scope entry is a valid glob")
+            })
+            .collect();
+
+        for url in [
+            "https://reactflow.dev?utm_source=attribution",
+            "https://reactflow.dev/attribution",
+        ] {
+            assert!(
+                allowed.iter().any(|pattern| pattern.matches(url)),
+                "{url} would be refused, so the link would do nothing"
+            );
+        }
+
+        // A glob is easy to write one character too loosely, and the scope is the last
+        // thing between a URL in the DOM and the user's browser: the wildcard after a
+        // host must not be able to eat the rest of the host.
+        assert!(
+            !allowed
+                .iter()
+                .any(|pattern| pattern.matches("https://reactflow.devil.example/")),
+            "the scope reaches past the host it names"
+        );
+    }
 }
