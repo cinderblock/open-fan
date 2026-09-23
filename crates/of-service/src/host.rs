@@ -193,7 +193,10 @@ impl Host {
         }
     }
 
-    fn update_error(&self, error: impl std::fmt::Display) -> Response {
+    fn update_error(&self, error: anyhow::Error) -> Response {
+        // `{:#}` walks the context chain. Plain Display shows only the outermost layer,
+        // which turns "404 from the feed" into the useless "fetching the update feed".
+        let error = format!("{error:#}");
         // Reported as a status rather than a bare error so the interface keeps the rest
         // of what it knows — the version, the setting — instead of blanking.
         let settings = crate::update::load_settings();
@@ -204,7 +207,7 @@ impl Host {
             rejected: None,
             automatic: settings.automatic,
             verifiable: crate::update::verifiable(),
-            error: Some(error.to_string()),
+            error: Some(error),
         };
 
         match serde_json::to_value(status) {

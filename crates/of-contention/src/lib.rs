@@ -85,7 +85,14 @@ pub struct Running {
 /// How hard we were willing to push, and how hard we had to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Politeness {
-    /// Ask its windows to close. The only rung that is unambiguously the app's own choice.
+    /// Run the application's **own documented exit command**.
+    ///
+    /// The gentlest rung and the only one the application publishes a contract for: it
+    /// exits through its own shutdown path, so it gets to restore whatever it was
+    /// controlling. Only available for applications that document such a command.
+    Ask,
+    /// Ask its windows to close. Often does nothing for a tray application, which may
+    /// have no window to close at all.
     Close,
     /// End its message loops. It usually still runs its shutdown path.
     Quit,
@@ -203,8 +210,35 @@ mod tests {
     fn politeness_escalates_in_the_documented_order() {
         // `stop` walks these in order and reports the gentlest that worked, so the
         // ordering is behaviour rather than cosmetics.
+        assert!(Politeness::Ask < Politeness::Close);
         assert!(Politeness::Close < Politeness::Quit);
         assert!(Politeness::Quit < Politeness::Terminate);
+    }
+
+    #[test]
+    fn asking_an_app_to_exit_counts_as_a_clean_stop() {
+        // The gentlest rung there is: the application ran its own shutdown path, so
+        // whatever it was controlling got handed back the way it intended.
+        let asked = StopOutcome::Stopped {
+            via: Politeness::Ask,
+        };
+        assert!(asked.is_stopped());
+        assert!(asked.had_chance_to_clean_up());
+    }
+
+    #[test]
+    fn a_documented_exit_command_is_only_claimed_where_one_is_published() {
+        // Guessing a flag on a program that holds someone's fans is not reasonable, so
+        // this must only ever be filled in from published documentation.
+        let fancontrol = lookup("FanControl").expect("known");
+        assert_eq!(fancontrol.stop_command, Some(&["-e"][..]));
+
+        // Everything we have found no published command for says so honestly.
+        assert_eq!(lookup("HWiNFO64").and_then(|a| a.stop_command), None);
+        assert_eq!(
+            lookup("ArmourySocketServer").and_then(|a| a.stop_command),
+            None
+        );
     }
 
     #[test]

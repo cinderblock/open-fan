@@ -106,15 +106,29 @@ pub struct UpdateStatus {
 }
 
 /// Ask the feed what the newest release is.
+///
+/// A **404 is not an error**. The feed is an asset of the latest published release, and
+/// GitHub does not serve assets of a draft — so "nothing published yet" and "no release
+/// is visible to you" both look like a missing file, and both mean the same thing to a
+/// user: there is no update. Reporting that as a failure would put a red message in front
+/// of everyone running the newest build.
 pub fn check(current: &str) -> anyhow::Result<(Option<Release>, Option<Rejection>)> {
-    let body = ureq::get(FEED_URL)
+    let response = match ureq::get(FEED_URL)
         .header("User-Agent", USER_AGENT)
         .config()
         .timeout_global(Some(TIMEOUT))
         .build()
         .call()
-        .context("fetching the update feed")?
-        .body_mut()
+    {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(404)) => {
+            return Ok((None, Some(Rejection::NothingPublished)));
+        }
+        Err(e) => return Err(anyhow::Error::new(e).context("fetching the update feed")),
+    };
+
+    let body = response
+        .into_body()
         .read_to_string()
         .context("reading the update feed")?;
 

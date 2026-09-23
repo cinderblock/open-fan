@@ -35,6 +35,17 @@ pub struct KnownApp {
     pub process_names: &'static [&'static str],
     /// Shown to the user when explaining what is in the way.
     pub note: &'static str,
+    /// Arguments that ask this application to exit, if it documents such a thing.
+    ///
+    /// Run against the application's **own executable**, which is the documented way to
+    /// talk to an already-running instance for the tools that support it. This is the
+    /// gentlest rung there is: the application exits through its own shutdown path, so it
+    /// gets to restore whatever it was controlling.
+    ///
+    /// Only fill this in from **published documentation**. A flag discovered by
+    /// experiment or by inspecting a binary is not a contract, and guessing at one on a
+    /// program that holds someone's fans is not a reasonable thing to do.
+    pub stop_command: Option<&'static [&'static str]>,
 }
 
 /// Applications known to contend for fan control or the Super I/O bus.
@@ -49,6 +60,15 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         process_names: &["FanControl", "FanControl.Service"],
         note: "Drives Super I/O PWM channels directly. Also a PawnIO client, so it shares \
                the bus correctly — but it cannot share a fan header.",
+        // Documented at getfancontrol.com/docs: "-e --exit: Force the currently running
+        // instance to exit." Running its own executable with a flag is how its
+        // documentation says to reach an instance that is already running.
+        //
+        // This matters more than tidiness here: it survived both WM_CLOSE to all eleven
+        // of its hidden windows and WM_QUIT to every GUI thread, so without a documented
+        // command the only thing left was termination — which runs no shutdown code and
+        // restores nothing it was controlling.
+        stop_command: Some(&["-e"]),
     },
     KnownApp {
         key: "librehardwaremonitor",
@@ -56,6 +76,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Controller,
         process_names: &["LibreHardwareMonitor"],
         note: "Reads sensors, and can set fan control when asked to.",
+        stop_command: None,
     },
     KnownApp {
         key: "openhardwaremonitor",
@@ -63,6 +84,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Controller,
         process_names: &["OpenHardwareMonitor"],
         note: "Unmaintained predecessor of LibreHardwareMonitor; may use WinRing0.",
+        stop_command: None,
     },
     KnownApp {
         key: "speedfan",
@@ -70,6 +92,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Controller,
         process_names: &["speedfan"],
         note: "Long-standing fan controller with its own kernel driver.",
+        stop_command: None,
     },
     KnownApp {
         key: "argusmonitor",
@@ -77,6 +100,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Controller,
         process_names: &["ArgusMonitor"],
         note: "Drives fan headers through its own driver.",
+        stop_command: None,
     },
     KnownApp {
         key: "hwinfo",
@@ -85,6 +109,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         process_names: &["HWiNFO64", "HWiNFO32", "HWiNFO64A"],
         note: "Primarily a monitor and safe to run alongside, though it can be configured \
                to control fans. Polls the Super I/O continuously.",
+        stop_command: None,
     },
     KnownApp {
         key: "aida64",
@@ -92,6 +117,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Monitor,
         process_names: &["aida64"],
         note: "Polls the Super I/O continuously while its sensor panel is open.",
+        stop_command: None,
     },
     KnownApp {
         key: "armourycrate",
@@ -106,6 +132,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         note: "ASUS vendor software. Reaches hardware through its own kernel driver and \
                holds a kernel mutex that user mode cannot acquire, so it cannot be \
                serialised against — avoid contending for the EC ports rather than trying.",
+        stop_command: None,
     },
     KnownApp {
         key: "msiafterburner",
@@ -113,6 +140,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Vendor,
         process_names: &["MSIAfterburner"],
         note: "Controls GPU fans. Does not usually touch motherboard headers.",
+        stop_command: None,
     },
     KnownApp {
         key: "corsairicue",
@@ -120,6 +148,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Vendor,
         process_names: &["iCUE"],
         note: "Controls Corsair fan hubs and AIO pumps over USB, not the Super I/O.",
+        stop_command: None,
     },
     KnownApp {
         key: "nzxtcam",
@@ -127,6 +156,7 @@ pub const KNOWN_APPS: &[KnownApp] = &[
         role: Role::Vendor,
         process_names: &["NZXT CAM"],
         note: "Controls NZXT hardware over USB, not the Super I/O.",
+        stop_command: None,
     },
 ];
 

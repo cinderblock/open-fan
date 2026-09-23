@@ -43,6 +43,10 @@ pub enum Rejection {
     InsecureUrl { url: String },
     /// No signature offered. Never install unsigned code as LocalSystem.
     Unsigned,
+    /// The feed is not there. Ordinary rather than broken: it is an asset of the newest
+    /// *published* release, so it is absent before the first one and while a release is
+    /// still a draft.
+    NothingPublished,
 }
 
 impl std::fmt::Display for Rejection {
@@ -56,6 +60,7 @@ impl std::fmt::Display for Rejection {
             }
             Self::InsecureUrl { url } => write!(f, "refusing a download that is not HTTPS: {url}"),
             Self::Unsigned => write!(f, "the release carries no signature"),
+            Self::NothingPublished => write!(f, "no release has been published yet"),
         }
     }
 }

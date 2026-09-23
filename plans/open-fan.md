@@ -699,6 +699,37 @@ exactly the failure the typed-port thesis exists to prevent.
 replacement is a faster *type checker* (the native TypeScript port), not removing the
 check.
 
+### Asking another controller to stand down, rather than killing it
+
+Researched from published documentation only — no binary was inspected — and then tested.
+
+**FanControl documents a way to be asked to exit.** `getfancontrol.com/docs` lists
+`-e --exit`: *"Force the currently running instance to exit."* Run against its own
+executable, which is how its documentation says to reach an instance that is already
+running. Its wiki frames the command line as an automation surface for third parties.
+
+**It works, where nothing else did.** On `Quasar` it exited in **4 seconds**. `WM_CLOSE` to
+all eleven of its hidden windows and `WM_QUIT` to every GUI thread had each failed after
+12. So `of_contention::stop` gained a gentlest rung, [`Politeness::Ask`], which runs an
+application's own documented command before any window messages.
+
+**And it hands the headers back.** Immediately after a clean exit both channels it had
+been holding read **Smart Fan IV** — the board's own curve — not manual. That confirms
+what its issue tracker reported anecdotally and matters a great deal: a *clean* exit
+leaves nothing stranded, while termination would have left the CPU fan and the pump
+frozen at whatever duty it last wrote. It is the difference between the gentlest rung and
+the harshest, made concrete.
+
+**Only fill `stop_command` in from published documentation.** A flag found by experiment
+or by inspecting a binary is not a contract, and guessing at one on a program that holds
+someone's fans is not reasonable.
+
+**What could not be learned from public sources**, and was not pursued because it would
+need decompilation: the IPC transport behind `FanControl.IPC.dll` (evidently gRPC, from
+user-posted stack traces in public issues), its endpoint or schema, and whether `-e` stops
+the newer FanControl *service* as well as its client. None of that is needed — the
+documented command is enough.
+
 ### Taking over from another fan controller — measured, on `Quasar`
 
 Established 2026-09-22 by doing it, not by reasoning about it. Implemented in
@@ -1100,8 +1131,10 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   safety-critical flow with only one of them tested is precisely the drift that caused the
   original incident. The service is the implementation; `--diagnose` and the pipe cover
   the diagnostic need.
-- **Ask FanControl to stand down rather than killing it.** `FanControl.IPC.dll` suggests an
-  external-control surface; research from public documentation only, never by decompiling.
+- ~~**Ask FanControl to stand down rather than killing it.**~~ **Done.** It documents
+  `-e --exit`, which works in about four seconds where window messages did not, and it
+  restores firmware control on the way out. `of_contention` now tries an application's own
+  documented exit command before anything else. See the Findings entry.
 - **Contention with other fan control software (high priority, user-requested).** Detect
   that another application is driving the same headers, surface it plainly in the UI, and
   offer to shut it down *reliably*. Register-level coexistence via the ISA bus mutex is

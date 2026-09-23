@@ -120,6 +120,62 @@ fn windows_of(pid: u32) -> (Vec<HWND>, Vec<u32>) {
     (collect.windows, collect.threads)
 }
 
+/// Run an application's own documented exit command.
+///
+/// Against its **own executable**, located from the running process rather than guessed
+/// at: that is how the tools documenting such a flag say to reach a running instance, and
+/// it means we cannot accidentally invoke some other program of the same name from PATH.
+fn ask_to_exit(running: &Running, args: &[&str]) -> Result<()> {
+    let exe = image_path(running.pid).ok_or_else(|| ContentionError::Stop {
+        name: running.app.name.to_owned(),
+        pid: running.pid,
+        detail: "could not locate the running executable".to_owned(),
+    })?;
+
+    tracing::info!(app = running.app.name, ?args, "asking it to exit");
+
+    std::process::Command::new(&exe)
+        .args(args)
+        .spawn()
+        .map_err(|e| ContentionError::Stop {
+            name: running.app.name.to_owned(),
+            pid: running.pid,
+            detail: format!("running {}: {e}", exe.display()),
+        })?;
+
+    Ok(())
+}
+
+/// The full path of a running process's executable.
+fn image_path(pid: u32) -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Threading::QueryFullProcessImageNameW;
+
+    // SAFETY: opening a handle with the least privilege that answers the question.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+
+    let mut buffer = [0u16; 32768];
+    let mut len = u32::try_from(buffer.len()).ok()?;
+
+    // SAFETY: `buffer` and `len` describe the same allocation; the call writes at most
+    // `len` code units and updates `len` to what it wrote.
+    let result = unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            windows::Win32::System::Threading::PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut len,
+        )
+    };
+
+    // SAFETY: the handle came from OpenProcess and is not used again.
+    let _ = unsafe { CloseHandle(handle) };
+
+    result.ok()?;
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(
+        &buffer[..len as usize],
+    )))
+}
+
 /// Wait for a process to disappear, or give up.
 fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
@@ -140,13 +196,18 @@ pub fn stop(running: &Running, limit: Politeness, timeout: Duration) -> Result<S
     // Each rung gets its own share of the budget rather than the whole thing, so a
     // stubborn application cannot spend the caller's entire timeout on the gentlest
     // attempt and never reach one that works.
-    let rungs: &[Politeness] = &[Politeness::Close, Politeness::Quit, Politeness::Terminate];
+    let rungs: &[Politeness] = &[
+        Politeness::Ask,
+        Politeness::Close,
+        Politeness::Quit,
+        Politeness::Terminate,
+    ];
     let attempts: Vec<Politeness> = rungs.iter().copied().filter(|r| *r <= limit).collect();
     let share = timeout
         .checked_div(u32::try_from(attempts.len().max(1)).unwrap_or(1))
         .unwrap_or(timeout);
 
-    let mut reached = Politeness::Close;
+    let mut reached = Politeness::Ask;
     for rung in attempts {
         reached = rung;
         tracing::info!(
@@ -157,6 +218,16 @@ pub fn stop(running: &Running, limit: Politeness, timeout: Duration) -> Result<S
         );
 
         match rung {
+            // The application's own documented way to be asked to exit. Skipped without
+            // a share of the budget when it publishes none, so a tool with no documented
+            // command does not lose time to a rung that cannot apply to it.
+            Politeness::Ask => match running.app.stop_command {
+                Some(args) => match ask_to_exit(running, args) {
+                    Ok(()) => {}
+                    Err(e) => tracing::debug!(error = %e, "documented exit command failed"),
+                },
+                None => continue,
+            },
             Politeness::Close => {
                 let (windows, _) = windows_of(running.pid);
                 for hwnd in windows {
