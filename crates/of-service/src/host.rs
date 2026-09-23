@@ -92,7 +92,7 @@ impl Host {
             }
 
             Request::AutostartSurvey => {
-                let found = of_contention::autostart::find();
+                let (found, examined) = of_contention::autostart::scan();
                 let dtos = found
                     .iter()
                     .enumerate()
@@ -109,7 +109,10 @@ impl Host {
                 if let Ok(mut held) = self.autostart.lock() {
                     *held = found;
                 }
-                Response::AutostartSurvey(dtos)
+                Response::AutostartSurvey {
+                    entries: dtos,
+                    examined,
+                }
             }
 
             Request::DisableAutostart { id } => {
@@ -123,7 +126,8 @@ impl Host {
 
                 match entry {
                     None => Response::Error {
-                        message: "That startup entry is no longer in the last survey.                                   Check again and retry."
+                        message: "That startup entry is no longer in the last survey. \
+                                  Check again and retry."
                             .to_owned(),
                     },
                     Some(entry) => match of_contention::autostart::disable(&entry) {

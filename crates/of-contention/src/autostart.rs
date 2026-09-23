@@ -112,7 +112,20 @@ pub enum AutostartError {
 /// Read-only. A machine with none returns an empty list, which is the answer that lets a
 /// caller say "nothing will come back after a reboot" honestly.
 pub fn find() -> Vec<AutostartEntry> {
-    survey()
+    scan().0
+}
+
+/// The rivals, and how many entries were examined to find them.
+///
+/// The count is the point. "No fan controller starts with this machine" and "the scan saw
+/// nothing at all" produce the same empty list, and only one of them is an all-clear
+/// somebody should act on. A caller that reports the total can tell them apart; a caller
+/// that only sees the list cannot.
+pub fn scan() -> (Vec<AutostartEntry>, usize) {
+    let all = survey();
+    let examined = all.len();
+
+    let rivals = all
         .into_iter()
         .filter_map(|(location, command)| {
             // An entry left behind by an uninstall starts nothing, and reporting it would
@@ -124,7 +137,9 @@ pub fn find() -> Vec<AutostartEntry> {
                 command,
             })
         })
-        .collect()
+        .collect();
+
+    (rivals, examined)
 }
 
 /// Everything that starts with this machine, recognised or not.

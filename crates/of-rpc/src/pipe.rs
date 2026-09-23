@@ -93,6 +93,45 @@ where
     windows_impl::serve(handle)
 }
 
+/// Run a handler, turning a panic into an answer instead of a dropped connection.
+///
+/// A panicking handler used to close the pipe with nothing written and nothing logged, so
+/// the client saw "the connection closed before a reply arrived" and there was no record
+/// anywhere of why. That is the least debuggable failure this server can produce, and it
+/// costs one `catch_unwind` to remove.
+///
+/// The engine is untouched by this: a panic here is on a connection thread, and fan
+/// control runs on its own. Answering the request and keeping the connection is strictly
+/// better than dropping both.
+///
+/// `AssertUnwindSafe` is the honest choice rather than a bound the handler cannot satisfy.
+/// The shared state a handler touches is behind mutexes whose poisoning is already handled
+/// — every `lock()` here treats a poisoned mutex as "no answer" rather than unwrapping —
+/// so a panic part-way through cannot leave a later request reading a torn value.
+fn answer<H>(handle: &H, request: Request) -> Response
+where
+    H: Fn(Request) -> Response,
+{
+    let described = format!("{request:?}");
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(request))) {
+        Ok(response) => response,
+        Err(payload) => {
+            // `catch_unwind` hands back the panic payload, which is the message for the
+            // common cases of `panic!` and `unwrap`.
+            let detail = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "no message".to_owned());
+
+            tracing::error!(request = %described, %detail, "a request handler panicked");
+            Response::Error {
+                message: format!("that request failed inside the service: {detail}"),
+            }
+        }
+    }
+}
+
 /// Read a request, answer it, repeat until the client goes away.
 ///
 /// Shared by the real server and by tests, so the framing is exercised without a pipe.
@@ -114,7 +153,7 @@ where
         // A request we cannot parse is answered, not dropped. A client that sent
         // nonsense deserves to be told so rather than watching the pipe close.
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(request) => handle(request),
+            Ok(request) => answer(handle, request),
             Err(e) => Response::Error {
                 message: format!("malformed request: {e}"),
             },
@@ -393,5 +432,61 @@ mod tests {
             Err(RpcError::NotRunning) => {}
             Err(other) => panic!("unexpected transport failure: {other}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_handler_answers_instead_of_dropping_the_connection() {
+        // The failure this replaces: the pipe closed with nothing written and nothing
+        // logged, so the client reported "the connection closed before a reply arrived"
+        // and no record existed anywhere of why.
+        let request = serde_json::to_string(&Request::Inventory).unwrap() + "\n";
+        let mut out = Vec::new();
+
+        converse(request.as_bytes(), &mut out, &|_| -> Response {
+            panic!("the handler fell over")
+        })
+        .expect("the conversation survives a panicking handler");
+
+        let reply: Response = serde_json::from_slice(out.split(|b| *b == b'\n').next().unwrap())
+            .expect("a reply was written");
+
+        match reply {
+            Response::Error { message } => {
+                assert!(
+                    message.contains("the handler fell over"),
+                    "the panic's own message should reach the caller: {message}"
+                );
+            }
+            other => panic!("expected an error response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_panic_does_not_end_the_conversation() {
+        // The next request still gets served, which is the difference between one broken
+        // feature and a client that has to reconnect.
+        let mut request = serde_json::to_string(&Request::Inventory).unwrap();
+        request.push('\n');
+        request.push_str(&serde_json::to_string(&Request::Hello).unwrap());
+        request.push('\n');
+
+        let mut out = Vec::new();
+        let seen = std::sync::atomic::AtomicUsize::new(0);
+        converse(request.as_bytes(), &mut out, &|r: Request| -> Response {
+            if seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                panic!("first one fails");
+            }
+            let _ = r;
+            Response::Ok
+        })
+        .expect("conversation continues");
+
+        let replies = out.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count();
+        assert_eq!(replies, 2, "both requests should have been answered");
     }
 }

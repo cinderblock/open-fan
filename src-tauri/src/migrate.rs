@@ -50,7 +50,7 @@ pub fn migration_survey() -> Result<MigrationSurvey, String> {
     // Best-effort: a service too old to answer this still gives a useful survey, and a
     // machine with no startup entries is the common case anyway.
     let autostart = match ask(Request::AutostartSurvey) {
-        Ok(Response::AutostartSurvey(entries)) => entries,
+        Ok(Response::AutostartSurvey { entries, .. }) => entries,
         _ => Vec::new(),
     };
 
@@ -65,6 +65,22 @@ pub fn migration_survey() -> Result<MigrationSurvey, String> {
         autostart,
         configs,
     })
+}
+
+/// The startup survey, for the diagnostic report.
+///
+/// Returns the total examined alongside the rivals, because an empty list on its own does
+/// not distinguish "nothing here competes for the fans" from "the scan saw nothing".
+pub fn autostart_summary() -> Result<(usize, Vec<of_ipc::AutostartEntryDto>), String> {
+    match ask(Request::AutostartSurvey)? {
+        Response::AutostartSurvey { entries, examined } => Ok((examined, entries)),
+        other => Err(format!("unexpected answer: {other:?}")),
+    }
+}
+
+/// Configurations found on disk, for the diagnostic report.
+pub fn found_configs() -> Vec<ForeignConfigDto> {
+    find_configs()
 }
 
 /// Switch off one startup entry the service found. **Explicit, one at a time.**

@@ -157,6 +157,31 @@ fn diagnose() {
     ));
     say(format!("clear: {}", report.clear));
 
+    // What will be true after a reboot, which none of the sections above can say. A
+    // machine that reads clear now and starts a rival at boot is exactly the case worth
+    // catching in a support report, because the person filing it saw "clear" first.
+    match crate::migrate::autostart_summary() {
+        Ok((examined, rivals)) => {
+            say(format!(
+                "\nstartup entries examined: {examined} ({} are fan controllers)",
+                rivals.len()
+            ));
+            for rival in &rivals {
+                say(format!("  {:<22} {}", rival.name, rival.location));
+            }
+        }
+        Err(e) => say(format!("\nstartup entries: unavailable ({e})")),
+    }
+
+    say("\nother fan-control configurations found:".to_owned());
+    let configs = crate::migrate::found_configs();
+    if configs.is_empty() {
+        say("  (none)".to_owned());
+    }
+    for config in &configs {
+        say(format!("  {:<22} {}", config.name, config.path));
+    }
+
     finish(&out);
 }
 

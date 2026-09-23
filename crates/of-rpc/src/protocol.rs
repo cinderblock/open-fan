@@ -108,7 +108,23 @@ pub enum Response {
     },
     Snapshot(Box<SnapshotDto>),
     ContentionReport(Box<ContentionReport>),
-    AutostartSurvey(Vec<AutostartEntryDto>),
+    /// A struct variant, not a newtype around the vector: `Response` is internally
+    /// tagged, and serde cannot serialize a tagged newtype variant wrapping a *sequence*.
+    /// It fails at serialization time, so the server writes nothing and the client sees
+    /// the connection close with no explanation anywhere.
+    /// A struct variant, not a newtype around the vector: `Response` is internally
+    /// tagged, and serde cannot serialize a tagged newtype variant wrapping a *sequence*.
+    /// It fails at serialization time, so the server writes nothing and the client sees
+    /// the connection close with no explanation anywhere.
+    AutostartSurvey {
+        entries: Vec<AutostartEntryDto>,
+        /// How many startup entries were examined in total.
+        ///
+        /// Reported because an empty `entries` is ambiguous on its own: it means either
+        /// "nothing here competes for the fans" or "the scan could not see anything", and
+        /// only the first of those is an all-clear.
+        examined: usize,
+    },
     AutostartDisabled(Box<AutostartDisabledDto>),
     Takeover(Box<TakeoverResult>),
     /// Acknowledgement for a request with nothing to return.
@@ -188,6 +204,122 @@ mod tests {
         // newline would be read as two malformed ones.
         let text = serde_json::to_string(&Request::TakeOver { force: false }).expect("encode");
         assert!(!text.contains('\n'), "{text}");
+    }
+
+    #[test]
+    fn every_response_variant_can_actually_be_serialized() {
+        // The gap that let a broken variant ship. `Response` is internally tagged, and
+        // serde cannot serialize a tagged newtype variant wrapping a *sequence* — it
+        // fails at run time, with nothing written and nothing logged, so the client
+        // reports only "the connection closed". Requests had a round-trip test; responses
+        // did not, and that asymmetry is the whole bug.
+        //
+        // One of every variant, so adding a variant that cannot be encoded fails here
+        // rather than on a user's machine.
+        let responses = vec![
+            Response::Hello {
+                version: "0.0.0".into(),
+                protocol: PROTOCOL_VERSION,
+            },
+            Response::Inventory(Box::new(HardwareInventory {
+                backend: "test".into(),
+                sensors: vec![],
+                channels: vec![],
+                driver_present: false,
+                driver_summary: String::new(),
+                module_missing: false,
+            })),
+            Response::Graph(Box::default()),
+            Response::GraphAccepted,
+            Response::GraphRejected { errors: vec![] },
+            Response::Snapshot(Box::new(SnapshotDto {
+                sequence: 0,
+                dt: 0.0,
+                tick_duration_ms: 0.0,
+                overruns: 0,
+                degraded: false,
+                sensor_error: None,
+                sensors: vec![],
+                wires: vec![],
+                commanded: Default::default(),
+                failsafed: vec![],
+            })),
+            Response::ContentionReport(Box::new(ContentionReport {
+                channels: vec![],
+                apps: vec![],
+                stranded: vec![],
+                clear: true,
+                blocker: None,
+            })),
+            Response::Takeover(Box::new(TakeoverResult {
+                steps: vec![],
+                succeeded: true,
+                blocker: None,
+                report: ContentionReport {
+                    channels: vec![],
+                    apps: vec![],
+                    stranded: vec![],
+                    clear: true,
+                    blocker: None,
+                },
+            })),
+            Response::Ok,
+            Response::UpdateStatus(Box::new(serde_json::Value::Null)),
+            Response::PreparedUpdate {
+                installer: "x".into(),
+                version: "1".into(),
+            },
+            Response::AutostartSurvey {
+                entries: vec![],
+                examined: 0,
+            },
+            Response::AutostartDisabled(Box::new(AutostartDisabledDto {
+                what: "x".into(),
+                restore_hint: None,
+            })),
+            Response::Error {
+                message: "x".into(),
+            },
+        ];
+
+        for response in &responses {
+            let text = serde_json::to_string(response)
+                .unwrap_or_else(|e| panic!("{response:?} cannot be encoded: {e}"));
+            let back: Response = serde_json::from_str(&text).unwrap_or_else(|e| {
+                panic!("{response:?} encoded to {text} but will not decode: {e}")
+            });
+            assert_eq!(
+                std::mem::discriminant(response),
+                std::mem::discriminant(&back),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_response_carrying_a_list_survives_having_something_in_it() {
+        // An empty vector encodes under rules a populated one might not, so the list
+        // variants are checked with contents too.
+        let response = Response::AutostartSurvey {
+            examined: 288,
+            entries: vec![AutostartEntryDto {
+                id: 0,
+                key: "fancontrol".into(),
+                name: "FanControl".into(),
+                location: "a scheduled task".into(),
+                command: r"C:.exe".into(),
+                reversible: true,
+            }],
+        };
+        let text = serde_json::to_string(&response).expect("encodes");
+        let back: Response = serde_json::from_str(&text).expect("decodes");
+        match back {
+            Response::AutostartSurvey { entries, examined } => {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(examined, 288);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
     }
 
     #[test]
