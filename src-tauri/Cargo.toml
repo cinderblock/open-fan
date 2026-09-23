@@ -22,6 +22,7 @@ of-core = { workspace = true }
 of-engine = { workspace = true }
 of-hal = { workspace = true }
 of-rpc = { workspace = true }
+of-config = { workspace = true }
 of-contention = { workspace = true }
 of-hal-mock = { workspace = true }
 of-units = { workspace = true }

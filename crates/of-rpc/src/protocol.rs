@@ -24,7 +24,10 @@
 use serde::{Deserialize, Serialize};
 
 use of_core::Graph;
-use of_ipc::{ContentionReport, HardwareInventory, SnapshotDto, TakeoverResult, ValidationError};
+use of_ipc::{
+    AutostartDisabledDto, AutostartEntryDto, ContentionReport, HardwareInventory, SnapshotDto,
+    TakeoverResult, ValidationError,
+};
 
 /// Anything the editor may ask for.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +70,22 @@ pub enum Request {
     /// without which OpenFan sees no hardware. User-initiated: nothing reaches the
     /// network on its own.
     FetchHardwareModule,
+
+    /// Which other fan controllers are set to start with this machine.
+    ///
+    /// Asked of the service rather than worked out by the editor because scheduled tasks
+    /// — the usual way a fan controller arranges to start with administrator rights —
+    /// are not readable without elevation.
+    AutostartSurvey,
+
+    /// Switch off one entry from the last [`Request::AutostartSurvey`].
+    ///
+    /// **By index, never by description.** The service keeps the survey it produced and
+    /// the caller may only point at something already in it. Accepting a registry path or
+    /// a file name here would let any client name anything at all for a LocalSystem
+    /// process to delete, which is a much larger power than "stop fighting me over the
+    /// fans" needs.
+    DisableAutostart { id: usize },
 }
 
 /// Everything the service may answer.
@@ -89,6 +108,8 @@ pub enum Response {
     },
     Snapshot(Box<SnapshotDto>),
     ContentionReport(Box<ContentionReport>),
+    AutostartSurvey(Vec<AutostartEntryDto>),
+    AutostartDisabled(Box<AutostartDisabledDto>),
     Takeover(Box<TakeoverResult>),
     /// Acknowledgement for a request with nothing to return.
     Ok,
@@ -108,7 +129,7 @@ pub enum Response {
 /// Bumped when a change would make an older editor misread a newer service, or the
 /// reverse. The editor checks it on connect rather than discovering the mismatch as a
 /// confusing failure three messages later.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The pipe both sides meet on.
 ///

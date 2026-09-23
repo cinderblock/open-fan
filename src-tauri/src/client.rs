@@ -36,7 +36,7 @@ pub struct ServiceStatus {
 ///
 /// Tauri commands return `Result<_, String>` because the failure is something the editor
 /// shows a person, not something it branches on.
-fn ask(request: Request) -> Result<Response, String> {
+pub(crate) fn ask(request: Request) -> Result<Response, String> {
     match of_rpc::request(&request) {
         Ok(response) => {
             if let Some(message) = response.error_message() {

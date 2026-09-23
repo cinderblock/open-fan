@@ -147,3 +147,51 @@ export const fetchHardwareModule = () => invoke<string>('fetch_hardware_module')
  */
 export const autostartEnabled = () => invoke<boolean>('autostart_enabled');
 export const setAutostart = (enabled: boolean) => invoke<boolean>('set_autostart', { enabled });
+
+// --- Arriving on a machine that already has fan-control software ------------------------
+
+export type { MigrationSurvey } from './bindings/MigrationSurvey';
+export type { AutostartEntryDto } from './bindings/AutostartEntryDto';
+export type { AutostartDisabledDto } from './bindings/AutostartDisabledDto';
+export type { ForeignConfigDto } from './bindings/ForeignConfigDto';
+export type { ImportedProfileDto } from './bindings/ImportedProfileDto';
+export type { ImportNoteDto } from './bindings/ImportNoteDto';
+export type { CalibrationDto } from './bindings/CalibrationDto';
+
+/**
+ * Everything OpenFan knows about the other fan-control software here.
+ *
+ * Read-only. Covers all three states a new installation can find: nothing else, something
+ * installed but idle, or something running right now.
+ */
+export const migrationSurvey = () =>
+  invoke<import('./bindings/MigrationSurvey').MigrationSurvey>('migration_survey');
+
+/**
+ * Stop one rival from starting with the machine.
+ *
+ * By id into the service's last survey, never by path — the service refuses anything it
+ * did not find itself.
+ */
+export const disableRivalAutostart = (id: number) =>
+  invoke<import('./bindings/AutostartDisabledDto').AutostartDisabledDto>(
+    'disable_rival_autostart',
+    { id },
+  );
+
+/**
+ * Translate another tool's configuration into a profile.
+ *
+ * **Does not apply it.** The result is for reading; installing it is a separate step
+ * through the ordinary graph-setting path.
+ */
+export const importForeignConfig = (path: string) =>
+  invoke<import('./bindings/ImportedProfileDto').ImportedProfileDto>('import_foreign_config', {
+    path,
+  });
+
+/** Ready-made configurations built from the hardware this machine actually has. */
+export const starterPresets = () =>
+  invoke<Array<{ id: string; name: string; description: string; graph: Graph }>>(
+    'starter_presets',
+  );

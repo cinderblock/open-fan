@@ -15,6 +15,7 @@ import type {
   ValidationError,
 } from './api';
 import NodeInspector, { type DeviceHint } from './NodeInspector';
+import MigrationPanel from './MigrationPanel';
 import MissingModule from './MissingModule';
 import TakeoverPanel from './TakeoverPanel';
 import UpdatePanel from './UpdatePanel';
@@ -145,6 +146,8 @@ export default function Sidebar({
       </header>
 
       <EngineStatus snapshot={snapshot} hardware={hardware} />
+
+      <MigrationPanel onApplied={onRevert} />
 
       <TakeoverPanel />
 

@@ -24,6 +24,13 @@ fn bundle() -> PathBuf {
 }
 
 /// The installer and its detached signature, if a signed build is present.
+///
+/// A signature older than the installer beside it is **stale local artifacts**, not a bad
+/// signature: rebuilding without re-signing leaves the two describing different bytes. It
+/// is treated as "nothing signed to check" for the same reason this file exists at all —
+/// a verification failure here reads as an attack, and sending somebody to look for one
+/// over a rebuild they did themselves is the exact confusion these tests are meant to
+/// prevent.
 fn signed_pair() -> Option<(PathBuf, PathBuf)> {
     let dir = bundle();
     let entries = std::fs::read_dir(dir).ok()?;
@@ -33,11 +40,28 @@ fn signed_pair() -> Option<(PathBuf, PathBuf)> {
         if path.extension().is_some_and(|e| e == "sig") {
             let installer = path.with_extension("");
             if installer.is_file() {
+                if is_stale(&installer, &path) {
+                    eprintln!(
+                        "{} is newer than its signature; rebuild and re-sign to check it",
+                        installer.display()
+                    );
+                    return None;
+                }
                 return Some((installer, path));
             }
         }
     }
     None
+}
+
+/// Whether the installer has been rebuilt since it was signed.
+fn is_stale(installer: &PathBuf, signature: &PathBuf) -> bool {
+    let modified = |p: &PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (modified(installer), modified(signature)) {
+        (Some(built), Some(signed)) => built > signed,
+        // Without timestamps, assume the pair is good and let verification speak.
+        _ => false,
+    }
 }
 
 #[test]

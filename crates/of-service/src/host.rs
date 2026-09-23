@@ -28,6 +28,14 @@ pub struct Host {
     /// Held so that "install it" refers to something *we* decided, rather than to
     /// anything a caller could name.
     update: std::sync::Mutex<Option<crate::update::Release>>,
+
+    /// The autostart entries the last survey found.
+    ///
+    /// Held for the same reason the release above is: so that "switch that one off"
+    /// refers to something *we* found, not to a registry path or file name a caller
+    /// supplied. A LocalSystem process that deletes whatever it is told to is a much
+    /// bigger thing than a fan controller needs to be.
+    autostart: std::sync::Mutex<Vec<of_contention::AutostartEntry>>,
 }
 
 /// This build's version, compared against whatever the feed offers.
@@ -42,6 +50,7 @@ impl Host {
         Self {
             engine: EngineHandle::spawn(engine),
             update: std::sync::Mutex::new(None),
+            autostart: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -80,6 +89,56 @@ impl Host {
             Request::Rescan => {
                 self.engine.rescan();
                 Response::Ok
+            }
+
+            Request::AutostartSurvey => {
+                let found = of_contention::autostart::find();
+                let dtos = found
+                    .iter()
+                    .enumerate()
+                    .map(|(id, entry)| of_ipc::AutostartEntryDto {
+                        id,
+                        key: entry.app.key.to_owned(),
+                        name: entry.app.name.to_owned(),
+                        location: entry.location.describe(),
+                        command: entry.command.clone(),
+                        reversible: entry.location.is_reversible(),
+                    })
+                    .collect();
+
+                if let Ok(mut held) = self.autostart.lock() {
+                    *held = found;
+                }
+                Response::AutostartSurvey(dtos)
+            }
+
+            Request::DisableAutostart { id } => {
+                // Resolved against our own survey. An id that is not in it is refused
+                // rather than interpreted.
+                let entry = self
+                    .autostart
+                    .lock()
+                    .ok()
+                    .and_then(|held| held.get(id).cloned());
+
+                match entry {
+                    None => Response::Error {
+                        message: "That startup entry is no longer in the last survey.                                   Check again and retry."
+                            .to_owned(),
+                    },
+                    Some(entry) => match of_contention::autostart::disable(&entry) {
+                        Ok(done) => {
+                            tracing::warn!(what = %done.what, "switched off an autostart entry");
+                            Response::AutostartDisabled(Box::new(of_ipc::AutostartDisabledDto {
+                                what: done.what,
+                                restore_hint: done.restore_hint,
+                            }))
+                        }
+                        Err(e) => Response::Error {
+                            message: e.to_string(),
+                        },
+                    },
+                }
             }
 
             Request::ContentionReport => {

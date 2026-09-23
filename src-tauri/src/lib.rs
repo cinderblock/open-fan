@@ -13,6 +13,7 @@
 
 mod client;
 pub mod commands;
+mod migrate;
 
 use tauri::{
     AppHandle, Manager, WindowEvent,
@@ -255,6 +256,10 @@ pub fn run() {
             client::fetch_hardware_module,
             client::autostart_enabled,
             client::set_autostart,
+            migrate::migration_survey,
+            migrate::disable_rival_autostart,
+            migrate::import_foreign_config,
+            migrate::starter_presets,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start OpenFan");

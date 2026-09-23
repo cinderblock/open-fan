@@ -514,3 +514,102 @@ dto! {
         pub report: ContentionReport,
     }
 }
+
+// --- Taking over from another tool ------------------------------------------------------
+
+dto! {
+    /// A known fan controller arranged to start with this machine.
+    ///
+    /// Reported separately from a *running* application because the two need different
+    /// answers. A running rival is a fight happening now; an autostart entry is a fight
+    /// scheduled for the next reboot, on a machine nobody will be watching.
+    pub struct AutostartEntryDto {
+        /// Index into the service's current survey, used to act on this entry.
+        pub id: usize,
+        /// Stable key, e.g. `fancontrol`.
+        pub key: String,
+        pub name: String,
+        /// Where it lives, phrased for someone who did not put it there.
+        pub location: String,
+        /// The command it runs.
+        pub command: String,
+        /// Whether switching it off can be undone without our help.
+        pub reversible: bool,
+    }
+}
+
+dto! {
+    /// What switching off an autostart entry did.
+    pub struct AutostartDisabledDto {
+        pub what: String,
+        /// How to put it back, for the one location with no reversible option.
+        pub restore_hint: Option<String>,
+    }
+}
+
+dto! {
+    /// A configuration file belonging to another fan controller.
+    pub struct ForeignConfigDto {
+        /// Stable key of the application it belongs to.
+        pub key: String,
+        pub name: String,
+        pub path: String,
+        /// How it was found, so a user can tell a live configuration from an old backup.
+        pub found_via: String,
+    }
+}
+
+dto! {
+    /// One thing an import did, or declined to do.
+    pub struct ImportNoteDto {
+        /// `exact`, `approximated`, `needs-attention` or `skipped`.
+        pub fidelity: String,
+        pub subject: String,
+        pub detail: String,
+    }
+}
+
+dto! {
+    /// A fan's measured duty-to-speed relationship, brought across from another tool.
+    pub struct CalibrationDto {
+        pub channel: String,
+        pub label: String,
+        /// `[duty percent, rpm]` pairs, ascending by duty.
+        pub points: Vec<(f64, f64)>,
+        /// The lowest duty at which the fan was seen turning.
+        pub lowest_turning_duty: Option<f64>,
+        /// Whether the table actually contains a stall, rather than merely not reaching
+        /// one. A table that never read zero is not proof that low duties are safe.
+        pub found_the_stall: bool,
+    }
+}
+
+dto! {
+    /// A translated configuration, for review. **Importing does not apply it.**
+    pub struct ImportedProfileDto {
+        pub name: String,
+        pub graph: Graph,
+        pub notes: Vec<ImportNoteDto>,
+        pub calibration: Vec<CalibrationDto>,
+        /// True when nothing at all could be translated.
+        pub empty: bool,
+    }
+}
+
+dto! {
+    /// Everything OpenFan knows about the other fan-control software on this machine.
+    ///
+    /// The three states a new installation can be in, answered in one place: nothing else
+    /// here, something installed but idle, or something running right now.
+    pub struct MigrationSurvey {
+        /// Rivals running at this moment, and what else holds the bus.
+        pub contention: ContentionReport,
+        /// Rivals that will start with the machine.
+        pub autostart: Vec<AutostartEntryDto>,
+        /// Configurations found on disk that could be imported.
+        pub configs: Vec<ForeignConfigDto>,
+        /// True when no other fan-control software is running, scheduled to run, or
+        /// installed — the clean-machine case.
+        pub nothing_else_here: bool,
+    }
+}
