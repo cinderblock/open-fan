@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+publish = false
 
 [lib]
 # Named distinctly from the binary so the desktop shell can be exercised from tests and,

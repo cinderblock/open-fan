@@ -22,6 +22,11 @@ allow = [
     "CC0-1.0",
     "MPL-2.0",         # file-level copyleft; safe to link, must stay unmodified
     "BSL-1.0",
+    # Mozilla's CA root bundle, reached through `ureq`, which the service uses to fetch
+    # updates and the PawnIO hardware module. A data licence rather than a code one — it
+    # covers the list of certificates, grants unrestricted use, and imposes no condition
+    # on a binary that embeds it.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 

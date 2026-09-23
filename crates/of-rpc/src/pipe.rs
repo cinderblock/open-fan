@@ -34,6 +34,9 @@
 //! `FILE_FLAG_FIRST_PIPE_INSTANCE` is set so a second server cannot quietly attach itself
 //! to the same name and impersonate the service.
 
+// Only `converse` needs these, and it is gated the same way: a Linux build serves no
+// pipe. `windows_impl` imports what it needs separately.
+#[cfg(any(windows, test))]
 use std::io::{BufRead, BufReader, BufWriter, Write};
 
 use crate::protocol::{Request, Response};
@@ -108,6 +111,10 @@ where
 /// The shared state a handler touches is behind mutexes whose poisoning is already handled
 /// — every `lock()` here treats a poisoned mutex as "no answer" rather than unwrapping —
 /// so a panic part-way through cannot leave a later request reading a torn value.
+/// Only the Windows server calls this, and the tests. Gated so a Linux build — where
+/// there is no pipe to serve — does not carry it as dead code, which CI treats as an
+/// error.
+#[cfg(any(windows, test))]
 fn answer<H>(handle: &H, request: Request) -> Response
 where
     H: Fn(Request) -> Response,
@@ -134,7 +141,10 @@ where
 
 /// Read a request, answer it, repeat until the client goes away.
 ///
-/// Shared by the real server and by tests, so the framing is exercised without a pipe.
+/// Shared by the real server and by tests, so the framing is exercised without a pipe —
+/// and gated to those two, since a Linux build serves nothing and would carry it as dead
+/// code.
+#[cfg(any(windows, test))]
 pub(crate) fn converse<R, W, H>(reader: R, writer: W, handle: &H) -> Result<()>
 where
     R: std::io::Read,

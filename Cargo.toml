@@ -17,6 +17,10 @@ members = [
 
 [workspace.package]
 version = "0.0.0"
+# Never published to a registry. This is what lets `allow-wildcard-paths` in deny.toml
+# apply to our own path dependencies: that exemption deliberately does not cover crates
+# that claim to be publishable, because crates.io rejects path dependencies.
+publish = false
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
