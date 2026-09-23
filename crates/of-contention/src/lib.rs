@@ -46,11 +46,13 @@
 
 use std::time::Duration;
 
+pub mod autostart;
 mod known;
 pub mod plan;
 #[cfg(windows)]
 mod windows_impl;
 
+pub use autostart::{AutostartEntry, AutostartError, Location as AutostartLocation};
 pub use known::{KNOWN_APPS, KnownApp, Role, lookup};
 pub use plan::{Blocker, ChannelSituation, Plan, Situation, hand_back_blocked_by, plan};
 
