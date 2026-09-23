@@ -1107,11 +1107,87 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
 - [ ] **Phase 5 — Product.** Profile persistence and switching, logging + uPlot charts,
       tray mini-visualization, sparklines on nodes/edges.
 - [ ] **Phase 6 — Distribution.** Signed releases, auto-update with controlled handoff.
-- [ ] **Phase 7 — Parity & import.** Profile importer + takeover wizard; fill remaining
-      parity gaps.
+- [~] **Phase 7 — Parity & import.** Importer and the three-state onboarding done;
+      remaining parity gaps unfilled. See "Meeting a machine that already has fan
+      software" below.
 - [ ] **Phase 8 — Beyond.** Servo controllers, limit-cycle detection and auto-damping,
       case visualizer, firmware-behaviour documentation, Linux, profile sharing across a
       dual-boot system.
+
+## Meeting a machine that already has fan software
+
+A new installation lands in one of three states, and each needs a different answer:
+
+| State | Answer |
+| --- | --- |
+| Nothing else installed | A preset generated from the hardware actually present |
+| Installed but idle | Import its configuration; switch off its autostart |
+| Running now | The above, plus stand it down (takeover) |
+
+### What the on-disk format turned out to do
+
+Established by reading real files, which is the one place the clean-room rules permit a
+competitor to be referenced. Fixtures live in `crates/of-config/tests/fixtures/`.
+
+- **A field called `Percent` does not always hold one.** A fixed-speed curve on the
+  reference machine holds `2200`, and an older backup of the same curve holds `1500`.
+  They are RPM. Clamping either into range produces a plausible profile that runs a pump
+  flat out, so a value that cannot be a duty is refused and named. This is the reason
+  `duty_percent` exists and why it returns `Option`.
+- **The section key moved** from `Main` to `FanControl` between versions, so the key
+  present selects the layout — not the version number, which is not reliable:
+  `backup_V255_userConfig.json` declares version 265 internally.
+- **Calibration rows gained a third column**; the first two never changed.
+- **Temperature sources are numbered by position**, and ours are keyed by what the input
+  measures. There is no faithful translation, so every imported curve carries a note
+  asking for the binding to be checked. Resolving this properly needs a positional map
+  per chip and is not yet worth the risk of guessing.
+
+### Calibration is the prize
+
+Those files carry a measured duty-to-speed table per fan, including where the fan stops.
+That is a measurement we would otherwise repeat by driving a fan towards stall on a
+machine trying to stay cool. `Calibration::found_the_stall` refuses to infer it from a
+table that never reached zero — no stall reading means the table says nothing about how
+slowly that fan can safely run.
+
+### Autostart is a separate kind of obstacle
+
+A rival installed with autostart but not running is invisible to `detect`, so a survey
+reports all-clear and the fight starts at the next reboot with nobody watching. It is
+surveyed as a *future* obstacle rather than folded into "is it running".
+
+Two things that would have made it quietly wrong, both now fixed and tested:
+
+- As LocalSystem, `HKEY_CURRENT_USER` is the service's own profile. The signed-in user's
+  `Run` key is reached through `HKEY_USERS` instead.
+- A Startup shortcut stores its target inside a binary structure. Matching the whole blob
+  recognised the application and then failed the "is it still installed" check, so a real
+  entry would have been detected and dropped.
+
+### Where the work is split, and why
+
+The import runs in the **window**, not the service: it is pure computation on a file the
+user can already read, so the LocalSystem service never opens a path a client named.
+Switching off an autostart entry goes to the service **by index into a survey the service
+holds** — never by path, or any client could name anything for a privileged process to
+delete. The service is asked only for what needs elevation: what is running, and what is
+scheduled to start.
+
+### Finding an installation
+
+There is no reliable record. The uninstall registry entry — the documented place to look
+— is **absent on the reference machine**, which has the software installed and working.
+So discovery goes by evidence, strongest first: a running process knows its own path, a
+startup entry names one, and failing both, the usual install directories. That last case
+is the common one rather than a fallback.
+
+### Not done
+
+- No file picker yet, so a configuration outside the usual places cannot be pointed at.
+- Start/stop thresholds have no equivalent node; the numbers are carried into
+  `Calibration` rather than half-implemented.
+- Curve kinds beyond a line and a constant are named in a note, not approximated.
 
 ## Backlog (captured from the initial brief, not yet scheduled)
 
