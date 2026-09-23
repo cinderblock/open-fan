@@ -52,6 +52,55 @@ This list is the product feature. It is what the interface has to be able to *ex
 - **Fixed RPM on a channel**, unless the chip's Speed Cruise mode is used — which is a
   different mode with different registers, not a curve.
 
+## Reading the curve: it is already in the dump
+
+The curve is sitting in readable registers, and the existing fixture
+(`of-hal-pawnio/tests/fixtures/nct6798d-quasar.txt`) already contains it. Decoded from
+that capture, with `0x?11..0x?14` read as temperatures and `0x?17..0x?1A` as duties:
+
+| channel | bank | mode | curve |
+| --- | --- | --- | --- |
+| 0 | 0x1 | SmartFanIV | 25 °C→55 % · 35→67 % · 45→78 % · 55→90 % |
+| 1 | 0x2 | **Manual** | 40 °C→55 % · 50→67 % · 60→78 % · 70→90 % |
+| 2 | 0x3 | **Manual** | 25 °C→55 % · 35→67 % · 45→78 % · 55→90 % |
+
+Monotonic, plausible, and the temperature ladder differs per channel while the duty ladder
+is identical across all three — the shape of a board default with per-channel tuning.
+
+**Those addresses are inferred from the shape of the dump, not verified.** They must be
+cross-checked against the Linux `nct6775` driver and then confirmed on hardware before
+anything relies on them. This family has already been caught: the seventh tachometer is at
+`0x4CE`, not the `0x4CC` a stride predicts.
+
+Also: that capture covers **banks 0–7 only**, so channels 3–6 are absent from it even
+though the dump tool's range now says 0–16. Re-capture before trusting any per-channel
+claim about those.
+
+## Whose curve is it? The registers do not say
+
+Channel 1 above is in **Manual** — software had taken it when the dump was captured — and
+its curve registers still hold a coherent ladder. So whatever took that channel moved the
+mode nibble and left the curve alone. That matches the live observation that FanControl's
+documented exit restored channels to SmartFan IV, which it could only do by preserving it.
+
+But **a register carries no provenance.** We read a value; we cannot read who wrote it.
+So two different questions have two different answers:
+
+- *Is this a plausible fan curve?* — yes, and we can read it.
+- *Is this the **BIOS's** curve?* — **not knowable from the registers alone.**
+
+"Looks untouched" is not proof of untouched, and vendor software with its own kernel driver
+can write things we never observe.
+
+The only reliable baseline is to **read the whole per-channel configuration at service
+start, before enabling control and before anything else has had a chance to run**. The
+service starts at boot, which makes it the one component positioned to capture that. It
+should snapshot then, and treat any later reading as "current state" rather than as the
+board's intent.
+
+This is the same discipline already applied to the mode nibble — read it, record it, prove
+you can restore it — widened to the register set that describes a curve.
+
 ## Persistence: the chip cannot keep it, and that is fine
 
 Those registers are volatile RAM. There is no user-writable non-volatile store for fan
