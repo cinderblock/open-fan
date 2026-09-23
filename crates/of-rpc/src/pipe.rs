@@ -433,6 +433,10 @@ mod tests {
         assert_eq!(out.lines().count(), 1, "{out}");
     }
 
+    // Windows-only: it asserts how a *missing* named pipe is reported, and elsewhere
+    // there is no named pipe to be missing — the transport answers `Unsupported`, which
+    // is correct and says nothing about the behaviour under test.
+    #[cfg(windows)]
     #[test]
     fn an_unreachable_service_is_named_as_such() {
         // On a machine with no service running this is the ordinary first-run state, and
