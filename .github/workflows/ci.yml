@@ -39,12 +39,16 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        # of-hal-pawnio is Windows-only; on Linux the rest of the workspace must still
-        # lint cleanly without it.
-        run: cargo clippy --workspace --all-features --all-targets --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio' || '' }}
+        # Two crates are Windows-only and excluded on Linux: of-hal-pawnio talks to a
+        # Windows kernel driver, and of-service *is* a Windows service — the control
+        # manager, the named pipe and the Super I/O backend have no Linux counterpart
+        # yet. Stubbing them to compile elsewhere would claim a portability we do not
+        # have. Everything the Linux port will actually reuse — the graph core, the
+        # engine, the units — must still lint cleanly without them, which is the point.
+        run: cargo clippy --workspace --all-features --all-targets --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio --exclude of-service' || '' }}
 
       - name: Test
-        run: cargo test --workspace --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio' || '' }}
+        run: cargo test --workspace --exclude open-fan ${{ runner.os == 'Linux' && '--exclude of-hal-pawnio --exclude of-service' || '' }}
 
   frontend:
     name: Frontend

@@ -23,6 +23,16 @@ function hostTriple() {
   return line.slice('host:'.length).trim();
 }
 
+// The service is a Windows service — the control manager, the named pipe and the Super
+// I/O backend have no Linux counterpart, so it does not build elsewhere and there is no
+// sidecar to stage. CI still typechecks and bundles the editor on Linux, which is what
+// that job is for; an installer can only be produced on Windows, so nothing stale can
+// reach one by skipping here.
+if (process.platform !== 'win32') {
+  console.log(`no service to stage on ${process.platform}; the editor build continues`);
+  process.exit(0);
+}
+
 const profile = process.argv.includes('--debug') ? 'debug' : 'release';
 const triple = hostTriple();
 
