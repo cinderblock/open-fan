@@ -357,7 +357,8 @@ impl Engine {
             .map(|id| {
                 let outcome = if self.acquired.contains(id) {
                     Err(format!(
-                        "{id} is held by this engine; release it rather than overwriting                          its mode"
+                        "{id} is held by this engine; release it rather than overwriting its \
+                         mode"
                     ))
                 } else {
                     self.backend

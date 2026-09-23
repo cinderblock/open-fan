@@ -166,7 +166,8 @@ pub enum GraphError {
     MissingInput(PortRef),
 
     #[error(
-        "node {node} would have to carry both {a} and {b}: its connections disagree about          the type flowing through it"
+        "node {node} would have to carry both {a} and {b}: its connections disagree about the \
+         type flowing through it"
     )]
     TypeConflict {
         node: NodeId,

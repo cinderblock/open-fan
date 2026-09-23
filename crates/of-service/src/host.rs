@@ -160,7 +160,8 @@ impl Host {
                     self.engine.rescan();
                     Response::Error {
                         message: format!(
-                            "Installed the hardware module to {}. Restart the OpenFan                              service to use it.",
+                            "Installed the hardware module to {}. Restart the OpenFan service \
+                             to use it.",
                             path.display()
                         ),
                     }

@@ -125,6 +125,51 @@ impl Calibration {
             None => false,
         }
     }
+
+    /// The lowest duty measured to reach `rpm`, if these measurements reach it at all.
+    ///
+    /// This is what turns a fixed speed we cannot command into one we can: we drive duty,
+    /// the other tool drove RPM, and the bridge between them is the table it left behind
+    /// — measured on *this* fan, on *this* machine.
+    ///
+    /// # What it refuses
+    ///
+    /// * **Anything outside the measured range.** Extrapolating past the last measurement
+    ///   is guessing, and guessing below the slowest measured speed guesses in the
+    ///   direction of a stalled fan.
+    /// * **A flat stretch.** Where two measurements barely differ in speed, duty says
+    ///   almost nothing about RPM, and interpolating across it would invent precision the
+    ///   measurements do not have. The pump on the reference machine has exactly such a
+    ///   dead zone — 970 rpm at 1 % and 979 rpm at 10 %.
+    ///
+    /// The *lowest* qualifying duty wins, because a table need not be monotonic and the
+    /// quietest way to reach a speed is the right bias for a fan controller.
+    pub fn duty_reaching(&self, rpm: f64) -> Option<f64> {
+        /// Minimum rise across a segment for interpolation within it to mean anything.
+        const MEANINGFUL_RISE_RPM: f64 = 50.0;
+
+        if !rpm.is_finite() || rpm <= 0.0 {
+            return None;
+        }
+
+        let mut best: Option<f64> = None;
+        for pair in self.points.windows(2) {
+            let (low, high) = (pair[0], pair[1]);
+            if high.rpm - low.rpm < MEANINGFUL_RISE_RPM {
+                continue;
+            }
+            if !(low.rpm..=high.rpm).contains(&rpm) {
+                continue;
+            }
+
+            let fraction = (rpm - low.rpm) / (high.rpm - low.rpm);
+            let duty = low.duty_percent + fraction * (high.duty_percent - low.duty_percent);
+            if (0.0..=100.0).contains(&duty) {
+                best = Some(best.map_or(duty, |b: f64| b.min(duty)));
+            }
+        }
+        best
+    }
 }
 
 /// The result of reading somebody else's configuration.

@@ -55,11 +55,13 @@ fn note_for<'a>(
 /// The pump's fixed curve stores `2200` in a field called `Percent`. It is an RPM. An
 /// importer that clamped it to 100 would produce a profile that looks entirely reasonable
 /// and runs a pump flat out — on the one channel whose owner deliberately keeps it slow.
+///
+/// This stays true however clever the translation gets: a value that is not a percentage
+/// must never *become* one by being clipped into range.
 #[test]
-fn a_fixed_speed_that_is_not_a_percentage_is_refused_rather_than_clamped() {
+fn a_fixed_speed_that_is_not_a_percentage_is_never_clamped_into_one() {
     let imported = fancontrol::import(V277, &reference_machine()).expect("imports");
 
-    // Nothing anywhere in the graph commands a duty derived from 2200.
     for node in imported.profile.graph.nodes.values() {
         if let NodeKind::Constant { value } = &node.kind {
             assert!(
@@ -70,31 +72,63 @@ fn a_fixed_speed_that_is_not_a_percentage_is_refused_rather_than_clamped() {
             assert_ne!(*value, 100.0, "2200 must not have become full speed");
         }
     }
-
-    // And it is called out rather than silently dropped.
-    let flagged = note_for(&imported, "Flat");
-    assert!(
-        flagged
-            .iter()
-            .any(|n| n.fidelity == Fidelity::NeedsAttention && n.detail.contains("2200")),
-        "the refused value must be named for the user, got {flagged:?}"
-    );
 }
 
 #[test]
-fn the_pump_is_left_alone_entirely_when_its_curve_cannot_be_translated() {
-    let imported = fancontrol::import(V277, &reference_machine()).expect("imports");
+fn a_channel_is_left_alone_when_its_speed_cannot_be_worked_out() {
+    // The measurements decide. Where they cannot reach the speed asked for, the channel
+    // goes to the motherboard rather than being handed a guessed number — half a
+    // translation is worse than none on a pump.
+    let unreachable = r#"{
+      "__VERSION__": "277",
+      "FanControl": {
+        "Controls": [
+          { "NickName": "Pump", "Identifier": "/lpc/nct6798d/control/4", "Enable": true,
+            "SelectedFanCurve": { "Name": "Fixed" },
+            "Calibration": [[0,0,false],[50,900,false],[100,1800,false]] }
+        ],
+        "FanCurves": [ { "Name": "Fixed", "CommandMode": 1, "Percent": 5000 } ]
+      }
+    }"#;
 
-    // The pump is on PWM 4. Its curve was refused, so nothing may drive it: handing a
-    // channel a half-translated duty would be worse than leaving it to the firmware.
+    let imported = fancontrol::import(unreachable, &reference_machine()).expect("imports");
+
     let drives_pump =
         imported.profile.graph.nodes.values().any(
             |n| matches!(&n.kind, NodeKind::FanOutput { channel } if channel == "nct6798d/pwm/4"),
         );
-
     assert!(
         !drives_pump,
-        "the pump must be left to the motherboard when its curve could not be brought across"
+        "a speed the fan was never measured reaching must not become a duty"
+    );
+
+    assert!(
+        imported
+            .needs_attention()
+            .any(|n| n.detail.contains("5000")),
+        "and the user must be told which speed could not be worked out"
+    );
+}
+
+#[test]
+fn a_control_with_no_measurements_at_all_cannot_have_its_speed_converted() {
+    // Without a table there is no bridge between duty and speed, so there is nothing to
+    // interpolate and nothing to guess from.
+    let no_table = r#"{
+      "__VERSION__": "277",
+      "FanControl": {
+        "Controls": [
+          { "NickName": "Pump", "Identifier": "/lpc/nct6798d/control/4", "Enable": true,
+            "SelectedFanCurve": { "Name": "Fixed" }, "Calibration": [] }
+        ],
+        "FanCurves": [ { "Name": "Fixed", "CommandMode": 1, "Percent": 2200 } ]
+      }
+    }"#;
+
+    let imported = fancontrol::import(no_table, &reference_machine()).expect("imports");
+    assert!(
+        imported.is_empty(),
+        "nothing should be built without measurements to convert from"
     );
 }
 
@@ -357,4 +391,198 @@ fn an_imported_profile_survives_being_saved_and_loaded_again() {
     let json = serde_json::to_string(&imported.profile).expect("serialises");
     let round_tripped = of_config::load(&json).expect("loads");
     assert_eq!(round_tripped, imported.profile);
+}
+
+// --- rescuing a fixed speed given in RPM ------------------------------------------------
+
+#[test]
+fn a_fixed_speed_in_rpm_is_converted_using_the_measurements_in_the_same_file() {
+    // The pump asks for 2200 rpm. Its own calibration puts 20 % at 1823 rpm and 30 % at
+    // 2927 rpm, so 2200 rpm is inside the measured range and worth about 23 %. Refusing
+    // it outright threw away data that was sitting in the same file.
+    let imported = fancontrol::import(V277, &reference_machine()).expect("imports");
+
+    let driven =
+        imported.profile.graph.nodes.values().any(
+            |n| matches!(&n.kind, NodeKind::FanOutput { channel } if channel == "nct6798d/pwm/4"),
+        );
+    assert!(driven, "the pump should now come across");
+
+    let duty = imported
+        .profile
+        .graph
+        .nodes
+        .values()
+        .find_map(|n| match &n.kind {
+            NodeKind::Constant { value } => Some(*value),
+            _ => None,
+        })
+        .expect("a fixed duty was produced");
+
+    // Interpolated between the two bracketing measurements, not clamped and not guessed.
+    assert!(
+        (23.0..=24.0).contains(&duty),
+        "2200 rpm should land near 23 %, got {duty}"
+    );
+
+    // And it is still flagged, because holding a duty is not holding a speed.
+    assert!(
+        imported
+            .needs_attention()
+            .any(|n| n.detail.contains("2200") && n.detail.contains('%')),
+        "the conversion must be explained rather than presented as exact"
+    );
+}
+
+#[test]
+fn a_speed_the_measurements_never_reached_is_refused_rather_than_extrapolated() {
+    use of_config::import::{Calibration, CalibrationPoint};
+
+    let measured = Calibration {
+        channel: "c".into(),
+        label: "Pump".into(),
+        points: vec![
+            CalibrationPoint {
+                duty_percent: 20.0,
+                rpm: 1000.0,
+            },
+            CalibrationPoint {
+                duty_percent: 100.0,
+                rpm: 3000.0,
+            },
+        ],
+        start_percent: None,
+        stop_percent: None,
+        minimum_percent: None,
+    };
+
+    // Inside the range, interpolated.
+    assert_eq!(measured.duty_reaching(2000.0), Some(60.0));
+
+    // Above anything measured: the fan may simply not go that fast, and guessing that it
+    // does is how a pump ends up commanded flat out.
+    assert_eq!(measured.duty_reaching(5000.0), None);
+
+    // Below anything measured: extrapolating downwards guesses towards a stall.
+    assert_eq!(measured.duty_reaching(200.0), None);
+
+    assert_eq!(measured.duty_reaching(0.0), None);
+    assert_eq!(measured.duty_reaching(f64::NAN), None);
+}
+
+#[test]
+fn a_dead_zone_in_the_measurements_is_not_interpolated_across() {
+    use of_config::import::{Calibration, CalibrationPoint};
+
+    // The real shape of the reference machine's pump at the bottom: 970 rpm at 1 % and
+    // 979 rpm at 10 %. Duty says almost nothing about speed there, so interpolating would
+    // invent precision the measurements do not have.
+    let measured = Calibration {
+        channel: "c".into(),
+        label: "Pump".into(),
+        points: vec![
+            CalibrationPoint {
+                duty_percent: 1.0,
+                rpm: 970.0,
+            },
+            CalibrationPoint {
+                duty_percent: 10.0,
+                rpm: 979.0,
+            },
+            CalibrationPoint {
+                duty_percent: 20.0,
+                rpm: 1823.0,
+            },
+        ],
+        start_percent: None,
+        stop_percent: None,
+        minimum_percent: None,
+    };
+
+    assert_eq!(
+        measured.duty_reaching(975.0),
+        None,
+        "a nine-rpm spread over nine percent of duty is not a measurement to interpolate"
+    );
+
+    // The segment above it is a real rise, so that one is usable.
+    let duty = measured
+        .duty_reaching(1400.0)
+        .expect("the rising segment works");
+    assert!((14.0..=16.0).contains(&duty), "got {duty}");
+}
+
+#[test]
+fn the_quietest_duty_that_reaches_a_speed_wins() {
+    use of_config::import::{Calibration, CalibrationPoint};
+
+    // A table need not be monotonic. Where two stretches both reach a speed, the lower
+    // duty is the right answer for a fan controller.
+    let measured = Calibration {
+        channel: "c".into(),
+        label: "Fan".into(),
+        points: vec![
+            CalibrationPoint {
+                duty_percent: 10.0,
+                rpm: 500.0,
+            },
+            CalibrationPoint {
+                duty_percent: 20.0,
+                rpm: 1500.0,
+            },
+            CalibrationPoint {
+                duty_percent: 30.0,
+                rpm: 900.0,
+            },
+            CalibrationPoint {
+                duty_percent: 40.0,
+                rpm: 1900.0,
+            },
+        ],
+        start_percent: None,
+        stop_percent: None,
+        minimum_percent: None,
+    };
+
+    let duty = measured.duty_reaching(1000.0).expect("reachable");
+    assert!(duty < 20.0, "should pick the quieter stretch, got {duty}");
+}
+
+#[test]
+fn two_fans_sharing_one_rpm_curve_each_get_their_own_duty() {
+    // The trap in sharing: the duty that spins one fan at a given speed is not the duty
+    // that spins another at the same speed, so an RPM curve cannot be cached by name the
+    // way a temperature curve is.
+    let config = r#"{
+      "__VERSION__": "277",
+      "FanControl": {
+        "Controls": [
+          { "NickName": "A", "Identifier": "/lpc/nct6798d/control/0", "Enable": true,
+            "SelectedFanCurve": { "Name": "Fixed" },
+            "Calibration": [[0,0,false],[50,1000,false],[100,2000,false]] },
+          { "NickName": "B", "Identifier": "/lpc/nct6798d/control/1", "Enable": true,
+            "SelectedFanCurve": { "Name": "Fixed" },
+            "Calibration": [[0,0,false],[25,1000,false],[100,4000,false]] }
+        ],
+        "FanCurves": [ { "Name": "Fixed", "CommandMode": 1, "Percent": 1000 } ]
+      }
+    }"#;
+
+    let imported = fancontrol::import(config, &reference_machine()).expect("imports");
+    let duties: Vec<f64> = imported
+        .profile
+        .graph
+        .nodes
+        .values()
+        .filter_map(|n| match &n.kind {
+            NodeKind::Constant { value } => Some(*value),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(duties.len(), 2, "each fan needs its own constant");
+    assert!(
+        duties.contains(&50.0) && duties.contains(&25.0),
+        "each fan should get the duty its own measurements give for 1000 rpm, got {duties:?}"
+    );
 }

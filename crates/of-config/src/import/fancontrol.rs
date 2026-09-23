@@ -345,14 +345,21 @@ pub fn import(json: &str, hw: &HardwareSummary) -> Result<Imported, ImportError>
             continue;
         };
 
-        // Build the curve once, however many controls point at it.
-        let source = match built.get(&curve_ref.name) {
-            Some(existing) => existing.clone(),
-            None => {
-                let built_now = build_curve(&mut graph, raw, hw, &mut notes, row);
-                built.insert(curve_ref.name.clone(), built_now.clone());
-                built_now
-            }
+        // A fixed speed given in RPM is resolved per control and deliberately *not*
+        // shared: the duty that spins one fan at 2200 rpm is not the duty that spins
+        // another at 2200 rpm, so caching it by curve name would hand one fan the other
+        // fan's answer.
+        let source = match fixed_rpm(raw) {
+            Some(rpm) => from_measurements(&mut graph, rpm, raw, control, &label, &mut notes, row),
+            None => match built.get(&curve_ref.name) {
+                // Every other kind of curve is built once, however many controls use it.
+                Some(existing) => existing.clone(),
+                None => {
+                    let built_now = build_curve(&mut graph, raw, hw, &mut notes, row);
+                    built.insert(curve_ref.name.clone(), built_now.clone());
+                    built_now
+                }
+            },
         };
 
         let Some(source) = source else {
@@ -425,6 +432,77 @@ pub fn import(json: &str, hw: &HardwareSummary) -> Result<Imported, ImportError>
         notes,
         calibration,
     })
+}
+
+/// The speed a fixed curve asks for, when it is a speed rather than a percentage.
+///
+/// A fixed-speed curve keeps its value in a field named `Percent`. When that value cannot
+/// be a percentage it is an RPM — the field name simply does not mean what it says in
+/// that mode. Recognising which is which is the whole of the distinction.
+fn fixed_rpm(raw: &RawCurve) -> Option<f64> {
+    if raw.command_mode != MODE_FLAT {
+        return None;
+    }
+    let value = raw.percent?;
+    (value.is_finite() && value > 100.0).then_some(value)
+}
+
+/// Turn a fixed speed in RPM into a duty, using the measurements in the same file.
+///
+/// This is the difference between refusing a curve and bringing it across. We command
+/// duty and the other tool commanded speed, and the bridge between them is the table it
+/// left behind — measured on this fan, on this machine, by its owner.
+///
+/// Returns `None` when the measurements do not reach that speed, which is the honest
+/// answer rather than an extrapolated one. [`Calibration::duty_reaching`] holds the rules.
+fn from_measurements(
+    graph: &mut Graph,
+    rpm: f64,
+    raw: &RawCurve,
+    control: &Control,
+    label: &str,
+    notes: &mut Vec<Note>,
+    row: usize,
+) -> Option<PortRef> {
+    let measured = read_calibration(control, "", label)?;
+
+    let Some(duty) = measured.duty_reaching(rpm) else {
+        notes.push(Note::new(
+            Fidelity::NeedsAttention,
+            label,
+            format!(
+                "Was held at a fixed {rpm} rpm. OpenFan commands a percentage rather than a \
+                 speed, and the measurements in this configuration do not say which percentage \
+                 produces {rpm} rpm on this fan — so it is left to the motherboard rather than \
+                 given a guessed number."
+            ),
+        ));
+        return None;
+    };
+
+    let rounded = (duty * 10.0).round() / 10.0;
+    let node = place(
+        graph,
+        &format!("rpm-{row}"),
+        NodeKind::Constant { value: rounded },
+        2,
+        row,
+    );
+
+    notes.push(Note::new(
+        Fidelity::NeedsAttention,
+        label,
+        format!(
+            "Was held at a fixed {rpm} rpm by \"{}\", and is set to {rounded} % here. \
+             OpenFan commands a percentage rather than a speed, and {rounded} % is what \
+             your own measurements in that configuration give for {rpm} rpm on this fan. \
+             Worth knowing: it is the percentage that is held steady now, not the speed, \
+             so nothing will compensate if this fan slows with age.",
+            raw.name
+        ),
+    ));
+
+    Some(PortRef::new(node, "out"))
 }
 
 /// Wire a duty source into a channel.
