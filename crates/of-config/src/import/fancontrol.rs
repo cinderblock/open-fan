@@ -22,14 +22,23 @@
 //!
 //! A fixed-speed curve stores its value in a field called `Percent`. On the reference
 //! machine, the AIO pump's fixed curve holds `2200`, and an older backup of the same
-//! curve holds `1500`. Those are not percentages. The owner of that machine runs the pump
-//! at a deliberate fixed **RPM**, and the field name simply does not mean what it says in
-//! that mode.
+//! curve holds `1500`. Neither can be a percentage.
 //!
-//! Clamping 2200 into range would have produced a perfectly plausible profile that runs a
-//! pump at 100 % — quiet failure in the worst direction, on the one channel whose whole
-//! purpose was to be slow. So a value that cannot be a duty is **refused**, named in a
-//! note, and left for a person. There is no default here worth substituting.
+//! **We do not know why, and this module does not pretend to.** Nothing in the file says
+//! what the value is instead: the curve carries only `CommandMode` and `Percent`, there
+//! is no unit or mode field on it or on the control, and no other key anywhere in the
+//! document mentions a speed. Two explanations fit equally well — the speed was set in
+//! rpm deliberately, or something wrote rpm into a field meant for a percentage. From
+//! the outside they are indistinguishable.
+//!
+//! So the rule is about the value, not the cause: **a number that cannot be a percentage
+//! is never treated as one.** Clamping 2200 into range would produce a perfectly
+//! plausible profile that runs a pump flat out — quiet failure in the worst direction, on
+//! the one channel whose whole purpose was to be slow.
+//!
+//! What we *can* do is read it as rpm and convert it using the calibration measured on
+//! that same fan, which is what [`Calibration::duty_reaching`] is for. That is a reading,
+//! not a fact, so it is always flagged for a person to confirm, in those words.
 //!
 //! # What cannot come across
 //!
@@ -493,11 +502,13 @@ fn from_measurements(
         Fidelity::NeedsAttention,
         label,
         format!(
-            "Was held at a fixed {rpm} rpm by \"{}\", and is set to {rounded} % here. \
-             OpenFan commands a percentage rather than a speed, and {rounded} % is what \
-             your own measurements in that configuration give for {rpm} rpm on this fan. \
-             Worth knowing: it is the percentage that is held steady now, not the speed, \
-             so nothing will compensate if this fan slows with age.",
+            "Please check this one. \"{}\" holds {rpm} where a percentage belongs, and \
+             {rpm} cannot be one. Nothing in the file says what it is instead, so OpenFan \
+             has read it as a speed in rpm — and your own measurements of this fan put \
+             {rpm} rpm at {rounded} %, which is what it is set to. If that reading is \
+             wrong, this fan is now running at the wrong speed. Either way OpenFan holds \
+             the percentage rather than the speed, so nothing compensates if this fan \
+             slows with age.",
             raw.name
         ),
     ));
@@ -707,9 +718,12 @@ fn not_a_duty_note(subject: &str, value: f64) -> Note {
         Fidelity::NeedsAttention,
         subject,
         format!(
-            "Holds the value {value}, which is not a percentage. It is most likely a fixed \
-             speed in RPM, which OpenFan cannot command directly yet. Left out \
-             deliberately: treating it as a percentage would run this fan at full speed."
+            "Holds {value} where a percentage belongs, and {value} cannot be one. Nothing \
+             in the file says what it is instead — most likely a speed in rpm, either \
+             because it was set that way or because it was written into the wrong field. \
+             OpenFan will not guess: treating {value} as a percentage would run this fan \
+             flat out, so this one is left to the motherboard. Set it yourself if you \
+             know what it should be."
         ),
     )
 }

@@ -52,12 +52,12 @@ fn note_for<'a>(
 
 /// The single most important assertion in this file.
 ///
-/// The pump's fixed curve stores `2200` in a field called `Percent`. It is an RPM. An
-/// importer that clamped it to 100 would produce a profile that looks entirely reasonable
-/// and runs a pump flat out — on the one channel whose owner deliberately keeps it slow.
+/// The pump's fixed curve stores `2200` in a field called `Percent`. Whatever that is, it
+/// is not a percentage, and an importer that clamped it to 100 would produce a profile
+/// that looks entirely reasonable and runs a pump flat out.
 ///
-/// This stays true however clever the translation gets: a value that is not a percentage
-/// must never *become* one by being clipped into range.
+/// The rule is about the value rather than its cause, which we do not know: a number that
+/// cannot be a percentage must never *become* one by being clipped into range.
 #[test]
 fn a_fixed_speed_that_is_not_a_percentage_is_never_clamped_into_one() {
     let imported = fancontrol::import(V277, &reference_machine()).expect("imports");
@@ -584,5 +584,37 @@ fn two_fans_sharing_one_rpm_curve_each_get_their_own_duty() {
     assert!(
         duties.contains(&50.0) && duties.contains(&25.0),
         "each fan should get the duty its own measurements give for 1000 rpm, got {duties:?}"
+    );
+}
+
+#[test]
+fn a_converted_speed_is_presented_as_a_reading_not_as_a_fact() {
+    // We cannot tell *why* a percentage field holds 2200. The file carries no unit and no
+    // mode: the value was either set in rpm deliberately or written into the wrong field,
+    // and from the outside those are indistinguishable. Reading it as rpm is the only
+    // useful thing to do with it, but it stays a reading — so the note has to say that it
+    // might be wrong and what goes wrong if it is.
+    let imported = fancontrol::import(V277, &reference_machine()).expect("imports");
+
+    let note = imported
+        .needs_attention()
+        .find(|n| n.detail.contains("2200"))
+        .expect("the converted speed is flagged");
+
+    assert!(
+        note.detail.contains("check") || note.detail.contains("Check"),
+        "it must ask to be checked: {}",
+        note.detail
+    );
+    assert!(
+        note.detail.contains("wrong"),
+        "it must say what happens if the reading is wrong: {}",
+        note.detail
+    );
+    // And it must not claim to know the cause.
+    assert!(
+        !note.detail.contains("deliberate"),
+        "the cause is unknown and must not be asserted: {}",
+        note.detail
     );
 }
