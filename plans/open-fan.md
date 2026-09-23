@@ -1084,18 +1084,22 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
 
 ## Backlog (captured from the initial brief, not yet scheduled)
 
-- **Autostart cannot work while the app requires administrator.** The Run key will not
-  launch an elevated application; it needs a scheduled task with highest privileges, or
-  the service host from Open Question 2. Not broken today only because autostart is never
-  enabled.
-- **Publish `latest.json` at the feed URL.** The signing key exists, CI signs, and the
-  service verifies — but nothing serves a manifest yet, so a check finds nothing. Needs
-  the release workflow to write `{version, url, signature, notes}` from the artifacts it
-  just signed, and to publish it where `update::FEED_URL` points.
-- **Move the takeover sequence into a library crate and test it.** It currently lives in
-  the `takeover` example, where `cargo test` never runs its assertions — so the guard that
-  refuses to restore firmware control under a live controller has no coverage, and was
-  once shipped missing. Must happen before it is wired to a button.
+- ~~**Autostart cannot work while the app requires administrator.**~~ **Resolved by the
+  service.** The window dropped to `asInvoker` when the service took the hardware, so the
+  Run key works again and there is a toggle for it. The scheduled-task workaround is not
+  needed: what actually had to start at boot was fan control, and that is the service.
+- ~~**Publish `latest.json` at the feed URL.**~~ **Done.** The release workflow writes it
+  from the artifacts it just signed and ships it as a release asset. Because GitHub does
+  not serve assets of a *draft* release, publishing the draft is what makes an update
+  visible — a deliberate gate. **Still untested end to end**, because that needs a real
+  tag pushed through CI; the manifest shape is covered by a test against real artifacts.
+- ~~**Move the takeover sequence into a library crate and test it.**~~ **Done.** Every
+  judgement is now a pure function in `of_contention::plan`, tested — including the guard
+  that was once shipped missing. The command-line example was **deleted** rather than
+  updated: it kept a hand-rolled copy of that guard, and two implementations of a
+  safety-critical flow with only one of them tested is precisely the drift that caused the
+  original incident. The service is the implementation; `--diagnose` and the pipe cover
+  the diagnostic need.
 - **Ask FanControl to stand down rather than killing it.** `FanControl.IPC.dll` suggests an
   external-control surface; research from public documentation only, never by decompiling.
 - **Contention with other fan control software (high priority, user-requested).** Detect
@@ -1103,8 +1107,11 @@ coarse and partly garbage; treat them as a last-resort source, never a primary o
   offer to shut it down *reliably*. Register-level coexistence via the ISA bus mutex is
   necessary but nowhere near sufficient — it stops corrupted reads, not two controllers
   fighting over the same PWM channel. Needs: identifying the competing process, detecting
-  a duty we did not command, and an honest `can_restore_firmware_control()` that returns
-  `false` while a header is contended. See the Findings entry for the reference machine.
+  a duty we did not command. *(The `can_restore_firmware_control()` clause is obsolete:
+  releasing is one-way and always ends at the board's fan curve, so there is no contended
+  case it cannot handle.)* Detection and takeover are **built and verified**; what remains
+  is detecting a duty we did not command, which needs a contested-write probe.
+  See the Findings entry for the reference machine.
 - Detection of limit cycling with automatic mitigation (add damping / slow rate of change).
 - Case visualizer — sensor placement in the case and loop topology, possibly 3D.
 - True servo controllers.
