@@ -56,6 +56,7 @@ import {
   type PortTypeMap,
 } from './graph';
 import { placeNode } from './layout';
+import MigrationPanel from './MigrationPanel';
 import type { DeviceHint } from './NodeInspector';
 import TypedNode, { type TypedNodeType } from './nodes/TypedNode';
 import { connects, rejectionReason, styleOf } from './quantities';
@@ -72,7 +73,12 @@ export default function App() {
   const [hardware, setHardware] = useState<HardwareInventory | null>(null);
   const [snapshot, setSnapshot] = useState<SnapshotDto | null>(null);
   const [errors, setErrors] = useState<ValidationError[]>([]);
-  const [rejection, setRejection] = useState<string | null>(null);
+  // One strip over the canvas, for the two things that happen away from where the user is
+  // looking: a connection refused mid-drag, and a document loaded by the getting-started
+  // modal after it has closed. The tone is carried by a colour and by the sentence.
+  const [notice, setNotice] = useState<{ tone: 'rejected' | 'applied'; text: string } | null>(
+    null,
+  );
   const [dirty, setDirty] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Selection is held here rather than read off the canvas, because rebuilding the
@@ -82,6 +88,10 @@ export default function App() {
   // Inferred port types for the *staged* graph, so a port locks to a colour as soon as
   // a connection decides it rather than waiting for Apply.
   const [portTypes, setPortTypes] = useState<PortTypeMap>(new Map());
+  // Getting started is a modal, and it lives here rather than in the sidebar so it is not
+  // clipped by a scrolling 310 px column. It opens itself once, on a machine with nothing
+  // configured; after that it is a button.
+  const [gettingStarted, setGettingStarted] = useState(false);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<TypedNodeType>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -100,6 +110,10 @@ export default function App() {
         setCatalogue(cat);
         setLocalGraph(doc);
         setHardware(inv);
+        // An empty document is the one state where an empty canvas and a node palette are
+        // not an answer. Anything already configured is left alone — nobody wants to
+        // dismiss a welcome screen every launch.
+        if (Object.keys(doc.nodes).length === 0) setGettingStarted(true);
       })
       .catch((err) => setLoadError(String(err)));
   }, []);
@@ -229,10 +243,12 @@ export default function App() {
       if (!connects(source, sink)) {
         // React Flow already refuses the edge; this exists so the refusal is *explained*
         // rather than the drag silently doing nothing.
-        if (source && sink) setRejection(rejectionReason(source, sink));
+        if (source && sink) {
+          setNotice({ tone: 'rejected', text: rejectionReason(source, sink) });
+        }
         return;
       }
-      setRejection(null);
+      setNotice(null);
       setDirty(true);
       setEdges((eds) =>
         addEdge(
@@ -416,7 +432,7 @@ export default function App() {
 
   const revert = useCallback(async () => {
     setErrors([]);
-    setRejection(null);
+    setNotice(null);
     setDirty(false);
     setLocalGraph(await getGraph());
   }, []);
@@ -499,12 +515,27 @@ export default function App() {
         selectedDevice={selectedDevice}
         onChangeNode={updateNode}
         onAddSensor={addSensorFor}
+        onGettingStarted={() => setGettingStarted(true)}
       />
 
-      {rejection && (
-        <div className="rejection" role="status">
-          <span>{rejection}</span>
-          <button type="button" onClick={() => setRejection(null)} aria-label="Dismiss">
+      <MigrationPanel
+        open={gettingStarted}
+        onClose={() => setGettingStarted(false)}
+        onApplied={async (message) => {
+          // Close first: what the message asks the user to do is look at the graph, and
+          // the modal is on top of it.
+          setGettingStarted(false);
+          // Re-read rather than assuming — the backend is the authority on what it
+          // accepted — and only then post the message, since reverting clears the strip.
+          await revert();
+          setNotice({ tone: 'applied', text: message });
+        }}
+      />
+
+      {notice && (
+        <div className={`notice notice--${notice.tone}`} role="status">
+          <span>{notice.text}</span>
+          <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss">
             ×
           </button>
         </div>

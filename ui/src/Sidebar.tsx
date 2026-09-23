@@ -15,7 +15,6 @@ import type {
   ValidationError,
 } from './api';
 import NodeInspector, { type DeviceHint } from './NodeInspector';
-import MigrationPanel from './MigrationPanel';
 import MissingModule from './MissingModule';
 import TakeoverPanel from './TakeoverPanel';
 import UpdatePanel from './UpdatePanel';
@@ -50,6 +49,7 @@ interface Props {
   onDelete: () => void;
   onChangeNode: (id: string, next: NodeInstance) => void;
   onAddSensor: (sensorId: string) => void;
+  onGettingStarted: () => void;
 }
 
 function EngineStatus({
@@ -121,6 +121,7 @@ export default function Sidebar({
   onDelete,
   onChangeNode,
   onAddSensor,
+  onGettingStarted,
 }: Props) {
   const grouped = useMemo(() => {
     const byCategory = new Map<NodeCategory, NodeDescriptor[]>();
@@ -147,7 +148,15 @@ export default function Sidebar({
 
       <EngineStatus snapshot={snapshot} hardware={hardware} />
 
-      <MigrationPanel onApplied={onRevert} />
+      {/* Getting started is a modal, not a section here: its paragraphs say what a button
+          will do before it is pressed, and at this width nobody read them. */}
+      <button
+        type="button"
+        className="button sidebar__getting-started"
+        onClick={onGettingStarted}
+      >
+        Getting started
+      </button>
 
       <TakeoverPanel />
 

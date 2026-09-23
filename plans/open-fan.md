@@ -1233,6 +1233,33 @@ encoded by a test — requests had that test and responses did not, which is why
 Related: a panicking handler used to drop the connection with nothing logged. `converse`
 now catches, logs and answers, so the next failure names itself.
 
+### Getting started is a modal, not a sidebar section
+
+It shipped as a section of the 310 px sidebar and did not work there. Every paragraph in
+it exists to say what a button will do *before* it is pressed — a startup entry being
+removed, another tool's configuration being translated — and at that width those wrapped
+into a column nobody reads. Consent nobody reads is not consent, so it takes the window.
+
+- A native `<dialog>` opened with `showModal()`, for the focus trap, the inert background
+  and Escape. It renders from `App`, not `Sidebar`, so the scrolling column cannot clip it.
+- It opens itself **once**, when the document loads with no nodes — the one state where an
+  empty canvas and a node palette are not an answer. Anything already configured is left
+  alone; a welcome screen to dismiss every launch is the thing being avoided. Afterwards
+  it is a **Getting started** button in the sidebar.
+- The survey runs on open rather than on mount, so reopening re-reads the machine, and an
+  application opened only to look at a graph never walks the registry.
+- Applying a preset or an import **closes** it, and the outcome sentence moves to a
+  notice strip over the canvas. The sentence says to go and check which temperature each
+  fan follows before turning control on — the modal is what covers the graph, so keeping
+  it open made the instruction undismissable and unfollowable at the same time. A *failed*
+  apply is the opposite case and stays in the modal: nothing loaded, the editor behind is
+  unchanged, and the reason belongs beside the button that caused it.
+- That strip was the connection-rejection notice, which was red and the only thing of its
+  kind. It is now `.notice` with `--rejected` and `--applied` tones; the sentence says
+  which it is, so the colour is never carrying the meaning alone.
+- **Still not verified visually** — the dev box has no rival installed and the UI has not
+  been seen rendered on `Quasar`.
+
 ### Not done
 
 - No file picker yet, so a configuration outside the usual places cannot be pointed at.
