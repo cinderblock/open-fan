@@ -1182,6 +1182,30 @@ So discovery goes by evidence, strongest first: a running process knows its own 
 startup entry names one, and failing both, the usual install directories. That last case
 is the common one rather than a fallback.
 
+### Verified on the reference machine
+
+- The service examines **142 startup entries** and finds 0 fan controllers, which is the
+  evidence that it really reads `System32\Tasks` — unreadable without elevation, and the
+  reason that half of the survey cannot move into the window.
+- Discovery finds the real configuration at its install path, with no process and no
+  startup entry pointing at it: the "installed but idle" case, end to end.
+- The inventory ids the importer translates onto are `nct6798d/pwm/0..6`,
+  `nct6798d/temp/systin` and `nct6798d/temp/cputin` — the same shape the importer tests
+  assume, so those tests model this machine rather than an invented one.
+- **Not verified:** the UI rendering, and switching an autostart entry *off*, because
+  this machine has no rival autostart entry to switch off.
+
+### A response that could not be encoded
+
+`Response` is internally tagged, and **serde cannot serialize a tagged newtype variant
+wrapping a sequence**. `AutostartSurvey(Vec<_>)` failed at serialization time, so the
+server wrote nothing and closed the pipe; the client reported only "the connection
+closed". List-carrying variants must be struct variants. Every response variant is now
+encoded by a test — requests had that test and responses did not, which is why it shipped.
+
+Related: a panicking handler used to drop the connection with nothing logged. `converse`
+now catches, logs and answers, so the next failure names itself.
+
 ### Not done
 
 - No file picker yet, so a configuration outside the usual places cannot be pointed at.
