@@ -1,0 +1,128 @@
+# In-chip control as a first-class choice
+
+**Status: designed, not implemented.** No registers for this are mapped yet — the backend
+writes only the mode nibble and the duty. See "What would have to be built".
+
+## The goal, stated carefully
+
+Not "prefer our engine". The opposite: **make the chip's own abilities a real, obvious,
+supported choice**, and make the boundary legible — so somebody can tell, without
+guessing, which of the things they want needs software running and which does not.
+
+Most people who install a fan controller want something the chip could already have done.
+Making them run a background service for it is a worse product, not a better one. The
+engine earns its place only where the chip genuinely cannot go, and a user deserves to
+know which side of that line their configuration sits on *before* they commit to it.
+
+## Why the chip is worth choosing
+
+| | In-chip | Userland engine |
+| --- | --- | --- |
+| Needs software running | no | yes |
+| Works before sign-in | yes | yes (the service starts at boot) |
+| Survives our crash | **yes** | no — falls to the failsafe |
+| Survives sleep/resume | probably; unverified | yes |
+| CPU cost | none | a tick loop |
+| Sensors it can read | only what is wired to it | anything the OS can see |
+| Logic | one temperature, a few points | the whole graph |
+
+The row that matters most is "survives our crash". Fan control that keeps working when the
+controlling software dies is a better safety story than any failsafe we can write, and it
+is the honest reason to offer this rather than a performance argument.
+
+## What the chip can actually be given
+
+SmartFan IV, per channel: a temperature source, a handful of temperature/duty points,
+step-up and step-down times, a tolerance, a critical temperature, and start/stop duty.
+The other modes (Thermal Cruise, Speed Cruise) target a temperature or an RPM instead.
+
+That is the entire vocabulary. There is no instruction set and nowhere to put a graph.
+
+## What can never move into the chip
+
+This list is the product feature. It is what the interface has to be able to *explain*.
+
+- **Sensors the chip cannot see.** GPU temperature does not exist from its point of view,
+  nor do drive temperatures, nor anything computed in software. This is permanent and is
+  the most common reason a configuration cannot be offloaded.
+- **More than one temperature per channel.** "Whichever is hotter, CPU or GPU" has nowhere
+  to live.
+- **Everything stateful we model**: PID, rate limits, low-pass filtering, hold bands,
+  comparators and select, delay, tachometer feedback into logic.
+- **Fixed RPM on a channel**, unless the chip's Speed Cruise mode is used — which is a
+  different mode with different registers, not a curve.
+
+## Persistence: the chip cannot keep it, and that is fine
+
+Those registers are volatile RAM. There is no user-writable non-volatile store for fan
+configuration on this family.
+
+But the thing that erases a setting is not the chip forgetting — it is **BIOS deliberately
+reprogramming the channel at every boot** from its own NVRAM. Making a curve survive that
+would mean writing a board vendor's private UEFI variables: undocumented, vendor-specific,
+and the class of write that bricks boards. Out of scope, permanently. The only legitimate
+way to make a curve persist is for a person to enter it in BIOS setup.
+
+**Re-application replaces persistence.** The service already starts at boot, so:
+
+```
+power on   → BIOS programs its own curve; it runs immediately and is safe
+service up → writes the user's curve into the chip
+           → steps out of the control loop entirely
+```
+
+Set once by the user, run by the chip. The service is then not a participant, which is the
+whole point: it can crash, be killed, or be updated and the fans still follow *the user's*
+curve rather than the board vendor's.
+
+Two things to verify rather than assume:
+
+- The window between power-on and the service starting. BIOS's curve covers it, so this is
+  safe, but it is not silent — a machine may be briefly louder or quieter than configured.
+- **Whether S3/S4 resume resets the chip.** If it does, re-apply on resume. Unverified.
+
+## The interface question
+
+A channel is in one of three states, and the interface should name them plainly:
+
+1. **Board default** — the BIOS curve, untouched. What a fresh install finds.
+2. **In chip** — the user's curve, programmed into the chip, running without us.
+3. **OpenFan engine** — the graph drives it every tick.
+
+The move that makes this legible: when a user builds something in the editor, tell them
+which side of the line it lands on, and *why*. A subgraph that reduces to
+`{one on-chip temperature → piecewise curve → output}` can be offloaded; anything else
+names the specific reason it cannot — "this follows your GPU temperature, which the
+motherboard chip cannot read".
+
+That diagnosis is a pure function over the graph and belongs in `of-core` or beside it,
+testable without hardware. It is the piece worth building first, because it is what makes
+the choice clear even before any offload exists.
+
+## What would have to be built
+
+1. **`offloadable(graph, channel) -> Offloadable | Vec<Reason>`** — pure, tested, no I/O.
+   Reduces a channel's subgraph to a curve or explains what stopped it. Useful on its own.
+2. **Register mapping for SmartFan IV** — auto-point temperature/duty registers, the
+   temperature source selector, step times, tolerance, critical temperature, start/stop.
+   Per this project's rules: cross-check the Linux `nct6775` driver for addresses, then
+   **verify each one on hardware**. That family has already been caught lying — the seventh
+   tachometer is at `0x4CE`, not the `0x4CC` a stride predicts, and `0x4CC` reads as a
+   confident wrong RPM.
+3. **Record-before-write, extended.** The existing discipline — read it, record it, prove
+   you can restore it — now covers a dozen registers per channel instead of two. The
+   recording burden grows with the register count and must not be skipped.
+4. **Re-apply at boot, and on resume if resume proves to reset the chip.**
+5. **Interface**: the three states above, per channel, with the reason shown when a
+   configuration cannot be offloaded.
+
+## Risks
+
+- **Overwriting the BIOS's curve in RAM.** Once we write auto-points, "hand back to
+  firmware" no longer restores the board's curve unless we recorded and restore those
+  registers too. Today handing back is cheap because we only moved a nibble.
+- **A wrong curve is a real thermal risk**, and unlike a wrong duty it persists after we
+  exit — that is the point of the feature and also its danger. The stall floor matters
+  here: the calibration import already records where a fan stops.
+- **Nothing survives a power cycle**, which is the compensating safety property. A bad
+  curve cannot brick anything; BIOS reinstates its own at the next boot.

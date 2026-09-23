@@ -1267,6 +1267,34 @@ into a column nobody reads. Consent nobody reads is not consent, so it takes the
   `Calibration` rather than half-implemented.
 - Curve kinds beyond a line and a constant are named in a note, not approximated.
 
+## In-chip control as a first-class choice
+
+Designed in [`in-chip-control.md`](in-chip-control.md); nothing implemented yet.
+
+The chip runs fan curves on its own, with no software involved — that is what a BIOS curve
+is. Offering that as a real choice, rather than assuming our engine is the answer, is a
+product goal: most people who install a fan controller want something the chip could
+already have done, and making them run a service for it is worse, not better.
+
+The engine earns its place only where the chip genuinely cannot go, and the interface
+should say which side of that line a configuration falls on, and why — "this follows your
+GPU temperature, which the motherboard chip cannot read".
+
+Two facts that shape it:
+
+- **The chip cannot persist a curve, and does not need to.** Those registers are volatile,
+  and what erases them is BIOS reprogramming the channel at each boot rather than the chip
+  forgetting. Making it stick would mean writing a vendor's private UEFI variables — out of
+  scope permanently. The service starts at boot, so it re-applies instead, then steps out
+  of the control loop entirely.
+- **It is a safety feature before it is an optimisation.** A curve running in the chip
+  survives our process dying, which is a better story than any failsafe we can write — and
+  it means the fallback is the *user's* curve rather than the board vendor's.
+
+The first piece to build is the pure diagnosis — can this channel's subgraph be reduced to
+a curve, and if not, exactly why — because that is what makes the choice legible even
+before any offload exists.
+
 ## Backlog (captured from the initial brief, not yet scheduled)
 
 - ~~**Autostart cannot work while the app requires administrator.**~~ **Resolved by the
