@@ -14,6 +14,7 @@
 
 pub mod infer;
 pub mod node;
+pub mod offload;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -538,6 +539,8 @@ mod node_tests;
 
 #[cfg(test)]
 mod infer_tests;
+#[cfg(test)]
+mod offload_tests;
 
 #[cfg(test)]
 mod feedback_tests;

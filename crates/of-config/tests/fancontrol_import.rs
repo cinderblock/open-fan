@@ -618,3 +618,34 @@ fn a_converted_speed_is_presented_as_a_reading_not_as_a_fact() {
         note.detail
     );
 }
+
+#[test]
+fn an_imported_configuration_reports_which_fans_could_run_in_the_chip() {
+    // The two halves meeting: what a real foreign configuration becomes, and whether the
+    // motherboard could run it without us. Printed rather than pinned to an exact verdict,
+    // because the useful assertion is that every channel gets a *usable* answer.
+    use of_core::offload::reduce_all;
+
+    let imported = fancontrol::import(V277, &reference_machine()).expect("imports");
+    let verdicts = reduce_all(&imported.profile.graph);
+
+    assert!(
+        !verdicts.is_empty(),
+        "the import drives at least one channel"
+    );
+
+    for (channel, verdict) in &verdicts {
+        match verdict {
+            Ok(reduction) => println!("{channel}: could run in the chip — {reduction:?}"),
+            Err(obstacles) => {
+                assert!(!obstacles.is_empty(), "a refusal must carry a reason");
+                for obstacle in obstacles {
+                    let text = obstacle.explain();
+                    println!("{channel}: stays in software — {text}");
+                    // Every refusal has to be a sentence a person can act on.
+                    assert!(text.len() > 30, "too terse to be useful: {text}");
+                }
+            }
+        }
+    }
+}

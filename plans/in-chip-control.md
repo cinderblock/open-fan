@@ -1,7 +1,8 @@
 # In-chip control as a first-class choice
 
-**Status: designed, not implemented.** No registers for this are mapped yet — the backend
-writes only the mode nibble and the duty. See "What would have to be built".
+**Status: the diagnosis is built; the offload is not.** `of_core::offload` decides whether
+a channel could run in the chip and explains what stopped it when it cannot. No curve
+registers are mapped yet — the backend still writes only the mode nibble and the duty.
 
 ## The goal, stated carefully
 
@@ -148,10 +149,44 @@ That diagnosis is a pure function over the graph and belongs in `of-core` or bes
 testable without hardware. It is the piece worth building first, because it is what makes
 the choice clear even before any offload exists.
 
+## What the diagnosis says about a real configuration
+
+`of_core::offload::reduce_all` run over the graph our own FanControl importer produces
+from the reference machine's configuration:
+
+```
+nct6798d/pwm/1: stays in software — The "Low-pass filter" step has no equivalent in the
+                motherboard chip. The chip has its own step-up and step-down timing, which
+                is similar but not the same — removing this step would let this fan run in
+                the chip.
+nct6798d/pwm/4: could run in the chip — Fixed { duty: 23.4 }
+```
+
+That is the shape the feature should have: one fan is told exactly what to give up and
+what it would gain, and the other is told it does not need us at all.
+
+Some nodes fold rather than block. A `Clamp` after a curve is the same as clamping its
+points, and `Offset` and `Scale` shift and stretch them — which matters because a
+minimum-duty floor from an import arrives as exactly that, and refusing to offload over it
+would be a needless "no".
+
+### A fixed duty in the chip is not the same kind of safe as a curve
+
+`pwm/4` above reduces to a constant, and a constant in the chip means Manual mode with a
+duty left in the register. It genuinely runs without us — but it **has no thermal
+response**. If the machine heats up, nothing moves.
+
+That is the same register state as a *stranded* channel, which this project treats as a
+fault. The difference is entirely intent, and intent is not readable from the chip. So
+offloading a fixed duty must be a louder decision than offloading a curve: it deserves its
+own confirmation saying the fan will not respond to temperature, and the channel should
+not afterwards be reported as stranded by our own contention survey.
+
 ## What would have to be built
 
-1. **`offloadable(graph, channel) -> Offloadable | Vec<Reason>`** — pure, tested, no I/O.
-   Reduces a channel's subgraph to a curve or explains what stopped it. Useful on its own.
+1. ~~**The pure diagnosis.**~~ **Done** — `of_core::offload::reduce` / `reduce_all`, with
+   folding for `Clamp`/`Offset`/`Scale` and an `explain()` per obstacle. No I/O, tested
+   without hardware, including against the graph the importer really produces.
 2. **Register mapping for SmartFan IV** — auto-point temperature/duty registers, the
    temperature source selector, step times, tolerance, critical temperature, start/stop.
    Per this project's rules: cross-check the Linux `nct6775` driver for addresses, then
