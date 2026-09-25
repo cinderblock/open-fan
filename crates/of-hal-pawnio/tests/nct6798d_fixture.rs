@@ -14,8 +14,7 @@
 use std::collections::BTreeMap;
 
 use of_hal_pawnio::nct6775::{
-    REG_FAN, REG_PWM, TEMP_INPUTS, decode_pwm, decode_rpm, decode_temp_byte, decode_temp_word,
-    identify,
+    REG_FAN, REG_PWM, TEMP_INPUTS, decode_pwm, decode_rpm, decode_temp_byte, identify,
 };
 
 const FIXTURE: &str = include_str!("fixtures/nct6798d-quasar.txt");
@@ -121,8 +120,9 @@ fn pwm_duties_decode_to_what_was_commanded() {
 fn temperatures_decode_to_the_readings_shown_at_capture_time() {
     let regs = registers();
 
+    // Both now read fixed source registers rather than slots, and both are byte-sized.
     let systin = decode_temp_byte(regs[&TEMP_INPUTS[0].register]);
-    let cputin = decode_temp_word(word(&regs, TEMP_INPUTS[1].register));
+    let cputin = decode_temp_byte(regs[&TEMP_INPUTS[1].register]);
 
     // The other tool showed 43 °C for the CPU source it was curving against.
     assert_eq!(cputin, Some(43.0), "CPUTIN");

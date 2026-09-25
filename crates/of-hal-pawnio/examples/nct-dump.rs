@@ -21,10 +21,7 @@
 use std::fmt::Write as _;
 
 use of_hal_pawnio::lpc::{LpcIo, Slot, Unlock};
-use of_hal_pawnio::nct6775::{
-    Nct6775, REG_FAN, REG_PWM, TEMP_INPUTS, decode_pwm, decode_rpm, decode_temp_byte,
-    decode_temp_word,
-};
+use of_hal_pawnio::nct6775::{Nct6775, REG_FAN, REG_PWM, TEMP_INPUTS, decode_pwm, decode_rpm};
 
 /// Banks to capture. Fans and voltages live in bank 4, PWM and temperatures in the low
 /// banks, source selection in bank 6.
@@ -114,11 +111,7 @@ fn dump(
     // printed here and what CI checks cannot drift apart.
     println!("temperatures:");
     for input in &TEMP_INPUTS {
-        let value = if input.word_sized {
-            decode_temp_word(chip.read_word(bus, input.register)?)
-        } else {
-            decode_temp_byte(chip.read_byte(bus, input.register)?)
-        };
+        let value = chip.read_temp(bus, input)?;
         match value {
             Some(c) => println!("  {:<28} {c:>7.1} C", chip.temp_id(input)),
             None => println!("  {:<28} {:>7}", chip.temp_id(input), "absent"),

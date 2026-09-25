@@ -189,6 +189,15 @@ impl SmartFanCurve {
         self.temp_sel & 0x1F
     }
 
+    /// The exposed input this curve follows, if its source is one we read.
+    ///
+    /// This is the link between a chip curve and a graph sensor: an offloaded curve must
+    /// follow the same input the graph names, and a graph built from a chip curve must
+    /// name the input the chip really follows.
+    pub fn followed_input(&self) -> Option<&'static TempInput> {
+        temp_input_for_source(self.temp_source())
+    }
+
     /// Whether the temperatures rise (or hold) from point to point.
     ///
     /// The chip does not enforce this; a ladder that goes backwards is a sign of reading
@@ -337,49 +346,153 @@ pub fn encode_pwm(percent: f64) -> u8 {
     (percent / 100.0 * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
+/// How a temperature register encodes its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TempEncoding {
+    /// One signed byte, whole degrees.
+    SignedByte,
+    /// Big-endian word: signed whole degrees in the high byte, a fraction in the low byte.
+    SignedWord,
+    /// AMD SB-TSI: an 11-bit reading in the top bits of a word, in 0.125 °C steps. Zero
+    /// means the interface is absent — the driver's own presence test — never a reading.
+    Tsi,
+}
+
 /// A temperature input and how to read it.
 pub struct TempInput {
     /// Stable id fragment. Never an index — a profile references this.
     pub key: &'static str,
     pub label: &'static str,
+    /// A register that holds this source's value at a **fixed address**, independent of
+    /// any slot select the BIOS may change. See [`TEMP_INPUTS`] for why that matters.
     pub register: u16,
-    /// Word-sized registers carry a fraction in the low byte; byte-sized ones do not.
-    pub word_sized: bool,
+    pub encoding: TempEncoding,
+    /// The chip's source index for this input, when it lives in that namespace: the value
+    /// a fan channel's [`REG_TEMP_SEL`] names when it follows this temperature. TSI
+    /// inputs are read through their own registers and have no source index.
+    pub source: Option<u8>,
 }
 
-/// Temperature inputs exposed to the engine.
+/// Temperature inputs exposed to the engine — every one the chip generates that we can
+/// read at a fixed address.
 ///
-/// **These are not fixed-function pins, and an earlier version of this comment said they
-/// were.** Per the Linux `nct6775` driver, `0x027` and `0x150` are slots 0 and 1 of the
-/// chip's monitored-temperature table, each paired by index with a source-select register
-/// (`0x621`, `0x622`) whose low five bits name what the slot shows. On the reference
-/// board those select 1 (SYSTIN) and 2 (CPUTIN) — so the names are right, but right by
-/// BIOS configuration rather than by silicon. A BIOS update could re-point either slot and
-/// these ids would keep meaning the same thing while the reading meant something else.
+/// # Read by source, never through a slot
 ///
-/// The correct fix is to key an id by *source* and verify the select at read time,
-/// refusing the reading if the slot no longer shows the source the id names — the same
-/// "never substitute" rule the engine applies to a failed read. Not done yet; see
-/// `plans/in-chip-control.md`. The other four monitored slots are unused on this board
-/// (select 0 or Virtual, value 0xFF) and stay unexposed.
+/// The chip has two namespaces. *Sources* are a 5-bit index naming a temperature:
+/// thermistor pins, the CPU's own reported temperature, SMBus, virtual. *Slots* are the
+/// registers at `0x027`, `0x150` and so on, each showing whichever source its select
+/// register (`0x621`…) currently names. An earlier version of this table read SYSTIN and
+/// CPUTIN through slots 0 and 1, believing them fixed-function. They were correct only
+/// because the BIOS had selected sources 1 and 2 — a BIOS update could re-point either and
+/// the id would keep its name while the reading changed meaning.
 ///
-/// Separately: the temperature the BIOS *curves* against on the CPU-related channels is
-/// source 28 (`PECI Agent 0 Calibration`), which no slot displays. It can only be read by
-/// pointing a spare slot at it — a configuration write, deliberately not done here.
-pub const TEMP_INPUTS: [TempInput; 2] = [
+/// So every entry here reads a register the Linux `nct6775` driver lists as holding a
+/// *specific source* regardless of slot configuration — its `REG_TEMP_ALTERNATE` table for
+/// sources 1–7, 28 and 29, and the dedicated SB-TSI registers. Verified against two
+/// captures from the reference board four days apart: the source-28 register moved
+/// 46 → 62 °C in step with every fan-channel monitor selecting source 28, and the source-3
+/// register held 67 °C while no slot displayed source 3 at all.
+///
+/// # Why source 28 matters
+///
+/// `PECI Agent 0 Calibration` is what this board's BIOS points its CPU fan curves at. It
+/// is the CPU's reported temperature, not the socket thermistor, and it was previously
+/// unreadable to us. A graph that could not bind it could not follow the temperature the
+/// firmware follows — a correctness gap for handing a curve to the chip, now closed.
+///
+/// The AUXTIN pins are exposed whether or not the board wires them: an unconnected pin
+/// reads something, and the plausibility bounds in the decoders are the only filter.
+/// Which pins are connected is a fact about the board, not the chip, and is not guessed.
+pub const TEMP_INPUTS: [TempInput; 11] = [
     TempInput {
         key: "systin",
         label: "System (SYSTIN)",
-        register: 0x027,
-        word_sized: false,
+        register: 0x490,
+        encoding: TempEncoding::SignedByte,
+        source: Some(1),
     },
     TempInput {
         key: "cputin",
         label: "CPU socket (CPUTIN)",
-        register: 0x150,
-        word_sized: true,
+        register: 0x491,
+        encoding: TempEncoding::SignedByte,
+        source: Some(2),
+    },
+    TempInput {
+        key: "auxtin0",
+        label: "AUXTIN0",
+        register: 0x492,
+        encoding: TempEncoding::SignedByte,
+        source: Some(3),
+    },
+    TempInput {
+        key: "auxtin1",
+        label: "AUXTIN1",
+        register: 0x493,
+        encoding: TempEncoding::SignedByte,
+        source: Some(4),
+    },
+    TempInput {
+        key: "auxtin2",
+        label: "AUXTIN2",
+        register: 0x494,
+        encoding: TempEncoding::SignedByte,
+        source: Some(5),
+    },
+    TempInput {
+        key: "auxtin3",
+        label: "AUXTIN3",
+        register: 0x495,
+        encoding: TempEncoding::SignedByte,
+        source: Some(6),
+    },
+    TempInput {
+        key: "auxtin4",
+        label: "AUXTIN4",
+        register: 0x496,
+        encoding: TempEncoding::SignedByte,
+        source: Some(7),
+    },
+    TempInput {
+        key: "peci0cal",
+        label: "PECI Agent 0 Calibration",
+        register: 0x4F4,
+        encoding: TempEncoding::SignedByte,
+        source: Some(28),
+    },
+    TempInput {
+        key: "peci1cal",
+        label: "PECI Agent 1 Calibration",
+        register: 0x4F5,
+        encoding: TempEncoding::SignedByte,
+        source: Some(29),
+    },
+    TempInput {
+        key: "tsi0",
+        label: "SB-TSI 0",
+        register: 0x409,
+        encoding: TempEncoding::Tsi,
+        source: None,
+    },
+    TempInput {
+        key: "tsi1",
+        label: "SB-TSI 1",
+        register: 0x40B,
+        encoding: TempEncoding::Tsi,
+        source: None,
     },
 ];
+
+/// The temperature each fan channel is *currently following*, one word register per
+/// channel, half-degree resolution. Monitor `i` displays the source [`REG_TEMP_SEL`]`[i]`
+/// selects — so unlike [`TEMP_INPUTS`] these depend on configuration, which is exactly
+/// what makes them useful for checking that a channel follows what we think it follows.
+pub const REG_TEMP_MON: [u16; 7] = [0x073, 0x075, 0x077, 0x079, 0x07B, 0x07D, 0x4A0];
+
+/// The input that carries a given source index, if we expose one.
+pub fn temp_input_for_source(source: u8) -> Option<&'static TempInput> {
+    TEMP_INPUTS.iter().find(|t| t.source == Some(source & 0x1F))
+}
 
 /// A recognised chip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,6 +582,29 @@ pub fn decode_temp_word(raw: u16) -> Option<f64> {
 /// Decode a byte-sized temperature: whole °C, signed.
 pub fn decode_temp_byte(raw: u8) -> Option<f64> {
     plausible_temp(f64::from(raw as i8))
+}
+
+/// Decode an SB-TSI temperature word.
+///
+/// Zero is how the driver tests whether the interface exists at all, so it is "no
+/// reading" here rather than 0 °C. The value is eleven bits in the top of the word, in
+/// eighth-degree steps — `(raw >> 5) * 0.125`, matching `tsi_temp_from_reg`.
+pub fn decode_tsi_temp(raw: u16) -> Option<f64> {
+    if raw == 0 {
+        return None;
+    }
+    plausible_temp(f64::from(raw >> 5) * 0.125)
+}
+
+/// Decode a raw register value according to how its input encodes it.
+///
+/// Byte-encoded inputs are passed widened; only the low byte is used for them.
+pub fn decode_temp(encoding: TempEncoding, raw: u16) -> Option<f64> {
+    match encoding {
+        TempEncoding::SignedByte => decode_temp_byte(raw as u8),
+        TempEncoding::SignedWord => decode_temp_word(raw),
+        TempEncoding::Tsi => decode_tsi_temp(raw),
+    }
 }
 
 fn plausible_temp(celsius: f64) -> Option<f64> {
@@ -563,6 +699,34 @@ impl Nct6775 {
             // happens once `failure` is set — so this `expect` cannot fire.
             None => Ok(curve.expect("a curve decodes when every register read succeeded")),
         }
+    }
+
+    /// Read and decode one temperature input. `Ok(None)` is a register that read but did
+    /// not decode to a plausible temperature — the caller must treat it as no reading.
+    pub fn read_temp(&self, bus: &Bus<'_>, input: &TempInput) -> Result<Option<f64>, LpcError> {
+        let raw = match input.encoding {
+            TempEncoding::SignedByte => u16::from(self.read_byte(bus, input.register)?),
+            TempEncoding::SignedWord | TempEncoding::Tsi => self.read_word(bus, input.register)?,
+        };
+        Ok(decode_temp(input.encoding, raw))
+    }
+
+    /// The temperature a fan channel is following right now, at half-degree resolution,
+    /// straight from that channel's monitor register. Read-only.
+    pub fn read_followed_temp(
+        &self,
+        bus: &Bus<'_>,
+        channel: usize,
+    ) -> Result<Option<f64>, LpcError> {
+        let register = REG_TEMP_MON[channel];
+        // The bank-0 monitors are words with a fraction byte; channel 6's lives in bank 4
+        // and is a plain byte. Widening it into the high byte is what the driver does.
+        let raw = if register < 0x100 {
+            self.read_word(bus, register)?
+        } else {
+            u16::from(self.read_byte(bus, register)?) << 8
+        };
+        Ok(decode_temp_word(raw))
     }
 
     /// Write one 8-bit register.
@@ -790,7 +954,10 @@ mod tests {
         // silently re-pointing a user's fan curve at a different sensor.
         for input in &TEMP_INPUTS {
             assert!(
-                input.key.chars().all(|c| c.is_ascii_lowercase()),
+                input
+                    .key
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
                 "{} is not a stable key",
                 input.key
             );

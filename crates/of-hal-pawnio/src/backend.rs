@@ -66,8 +66,7 @@ use crate::ffi::PawnIoError;
 use crate::lpc::{LpcError, LpcIo, Slot, Unlock};
 use crate::nct6775::{
     FanMode, Model, Nct6775, REG_FAN, REG_FAN_MODE, REG_PWM_WRITE, TEMP_INPUTS, decode_pwm,
-    decode_rpm, decode_temp_byte, decode_temp_word, encode_pwm, mode_from_register,
-    mode_into_register, release_mode,
+    decode_rpm, encode_pwm, mode_from_register, mode_into_register, release_mode,
 };
 
 /// Everything `release` needs to undo an `acquire`, captured before anything was written.
@@ -381,15 +380,7 @@ impl SensorSource for SuperIoBackend {
         let mut readings = BTreeMap::new();
 
         for input in &TEMP_INPUTS {
-            let value = if input.word_sized {
-                self.chip
-                    .read_word(&bus, input.register)
-                    .map(decode_temp_word)
-            } else {
-                self.chip
-                    .read_byte(&bus, input.register)
-                    .map(decode_temp_byte)
-            };
+            let value = self.chip.read_temp(&bus, input);
             // An I/O failure and an implausible value are the same outcome here: no
             // reading for this sensor this tick.
             if let Ok(Some(celsius)) = value {
