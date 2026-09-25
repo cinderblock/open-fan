@@ -1,8 +1,10 @@
 # In-chip control as a first-class choice
 
-**Status: the diagnosis is built; the offload is not.** `of_core::offload` decides whether
-a channel could run in the chip and explains what stopped it when it cannot. No curve
-registers are mapped yet — the backend still writes only the mode nibble and the duty.
+**Status: reading is built; writing is not.** `of_core::offload` decides whether a channel
+could run in the chip and explains what stopped it. `of_hal_pawnio::nct6775` now *reads* a
+channel's SmartFan IV curve — the registers are mapped and tested against a real capture.
+Nothing writes a curve register yet; that is the step that moves fans and waits for a
+person.
 
 ## The goal, stated carefully
 
@@ -53,29 +55,25 @@ This list is the product feature. It is what the interface has to be able to *ex
 - **Fixed RPM on a channel**, unless the chip's Speed Cruise mode is used — which is a
   different mode with different registers, not a curve.
 
-## Reading the curve: it is already in the dump
+## Reading the curve: done, and a caution about how
 
-The curve is sitting in readable registers, and the existing fixture
-(`of-hal-pawnio/tests/fixtures/nct6798d-quasar.txt`) already contains it. Decoded from
-that capture, with `0x?11..0x?14` read as temperatures and `0x?17..0x?1A` as duties:
+Decoded and tested in `of_hal_pawnio::nct6775` (`decode_smart_fan_curve`,
+`read_smart_fan_curve`). Addresses come from the Linux `nct6775` driver and are checked
+against a 16-bank capture from this board (`tests/fixtures/nct6798d-quasar-full.txt`).
 
-| channel | bank | mode | curve |
-| --- | --- | --- | --- |
-| 0 | 0x1 | SmartFanIV | 25 °C→55 % · 35→67 % · 45→78 % · 55→90 % |
-| 1 | 0x2 | **Manual** | 40 °C→55 % · 50→67 % · 60→78 % · 70→90 % |
-| 2 | 0x3 | **Manual** | 25 °C→55 % · 35→67 % · 45→78 % · 55→90 % |
+**The addresses that shipped are not the ones first guessed.** An earlier pass "found" the
+curve at `0x?11`/`0x?17` by shape — a perfectly plausible monotonic ladder sits there. It
+is the wrong table. The driver puts SmartFan IV at `0x?21` (temperatures) and `0x?27`
+(duties), and re-reading the same dump there gives a *different*, equally plausible ladder.
+The lesson is banked: a convincing shape is not an address, which is why nothing here
+relies on inference. What the `0x?11`/`0x?17` ladder actually is remains unmapped.
 
-Monotonic, plausible, and the temperature ladder differs per channel while the duty ladder
-is identical across all three — the shape of a board default with per-channel tuning.
-
-**Those addresses are inferred from the shape of the dump, not verified.** They must be
-cross-checked against the Linux `nct6775` driver and then confirmed on hardware before
-anything relies on them. This family has already been caught: the seventh tachometer is at
-`0x4CE`, not the `0x4CC` a stride predicts.
-
-Also: that capture covers **banks 0–7 only**, so channels 3–6 are absent from it even
-though the dump tool's range now says 0–16. Re-capture before trusting any per-channel
-claim about those.
+Decoded from the full capture, all seven channels read as monotonic curves. The two the
+BIOS treats as CPU fans follow temperature **source 28 — "PECI Agent 0 Calibration"** —
+not a thermistor pin. On this AMD board that is how the firmware routes CPU temperature,
+and it is a source `TEMP_INPUTS` does not expose (it has SYSTIN and CPUTIN only). Offloading
+a CPU curve cannot bind the same reading the BIOS uses until that source is exposed. There
+is a test pinning this so it is not forgotten.
 
 ## Whose curve is it? The registers do not say
 
@@ -187,17 +185,18 @@ not afterwards be reported as stranded by our own contention survey.
 1. ~~**The pure diagnosis.**~~ **Done** — `of_core::offload::reduce` / `reduce_all`, with
    folding for `Clamp`/`Offset`/`Scale` and an `explain()` per obstacle. No I/O, tested
    without hardware, including against the graph the importer really produces.
-2. **Register mapping for SmartFan IV** — auto-point temperature/duty registers, the
-   temperature source selector, step times, tolerance, critical temperature, start/stop.
-   Per this project's rules: cross-check the Linux `nct6775` driver for addresses, then
-   **verify each one on hardware**. That family has already been caught lying — the seventh
-   tachometer is at `0x4CE`, not the `0x4CC` a stride predicts, and `0x4CC` reads as a
-   confident wrong RPM.
+2. ~~**Register mapping for SmartFan IV (read).**~~ **Done** — `REG_AUTO_TEMP`/`REG_AUTO_PWM`,
+   `REG_TEMP_SEL`, step times, tolerance, critical temperature, start/stop, all decoded and
+   tested against a real capture. The *write* path is not built.
 3. **Record-before-write, extended.** The existing discipline — read it, record it, prove
    you can restore it — now covers a dozen registers per channel instead of two. The
    recording burden grows with the register count and must not be skipped.
 4. **Re-apply at boot, and on resume if resume proves to reset the chip.**
-5. **Interface**: the three states above, per channel, with the reason shown when a
+5. **Expose the monitored temperature sources**, at least the PECI one the BIOS uses for
+   CPU fans on this board. Without it, `offload` can produce a curve on CPUTIN that the
+   chip cannot follow the same way the firmware does — a correctness gap, not just a
+   missing feature.
+6. **Interface**: the three states above, per channel, with the reason shown when a
    configuration cannot be offloaded.
 
 ## Risks
