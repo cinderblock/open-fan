@@ -1,10 +1,11 @@
 # In-chip control as a first-class choice
 
 **Status: reading is built; writing is not.** `of_core::offload` decides whether a channel
-could run in the chip and explains what stopped it. `of_hal_pawnio::nct6775` now *reads* a
-channel's SmartFan IV curve — the registers are mapped and tested against a real capture.
-Nothing writes a curve register yet; that is the step that moves fans and waits for a
-person.
+could run in the chip and explains what stopped it. `of_hal_pawnio::nct6775` reads a
+channel's SmartFan IV curve, and every temperature the chip generates is now an engine
+input — including the one the BIOS curves against, which closes the correctness gap noted
+below. Nothing writes a curve register yet; that is the step that moves fans and waits for
+a person.
 
 ## The goal, stated carefully
 
@@ -100,49 +101,79 @@ board's intent.
 This is the same discipline already applied to the mode nibble — read it, record it, prove
 you can restore it — widened to the register set that describes a curve.
 
-## Why we do not read the temperature the BIOS curves against
+## Every temperature the chip generates — and the one we were missing
 
-The chip has two namespaces that are easy to conflate:
+The rule that drove this: *if the chip generates a temperature and the engine does not
+get it, that is a bug.* It was one. Two inputs were exposed; the chip produces eleven we
+can read.
 
-- **Sources** — a 5-bit index naming a physical or bus-fed temperature: thermistor pins
-  (SYSTIN, CPUTIN, AUXTIN0-4), CPU-reported temperature (the "PECI Agent" entries; on this
-  AMD board that path carries the CPU's own reading), SMBus and virtual sources.
-- **Monitored slots** — six value registers software can read (`0x027`, `0x150`, and four
-  more), each with a source-select register (`0x621..0x626`) saying which source it shows.
+### Sources and slots are different namespaces
 
-Software reads *slots*. The fan-control block follows *sources* directly. Those are
-different paths, and the dump shows the consequence:
+- **Sources** — a 5-bit index naming a temperature: thermistor pins (SYSTIN, CPUTIN,
+  AUXTIN0-4), the CPU's own reported temperature (the "PECI Agent" entries; on this AMD
+  board that path carries the CPU's reading), SMBus, virtual. Valid indices on the NCT6798
+  are the driver's `NCT6798_TEMP_MASK`: 1-11, 16-29 and 31.
+- **Slots** — the registers software conventionally reads (`0x027`, `0x150`, …), each
+  showing whichever source its select register (`0x621`…) currently names.
 
-| slot | select | shows | value |
+Software reads slots. The fan-control block follows sources. We read slots 0 and 1 and
+called them SYSTIN and CPUTIN — correct only because the BIOS had selected sources 1 and
+2. The failure that comment warned about applied to what we shipped.
+
+### The fix: read by source, at fixed addresses
+
+The driver's `NCT6798_REG_TEMP_ALTERNATE` table lists, per source, a register holding that
+source's value regardless of slot configuration. Every input now reads one of those:
+
+| key | source | register | what |
 | --- | --- | --- | --- |
-| 0 (`0x027`) | 1 | SYSTIN | 44 °C |
-| 1 (`0x150`) | 2 | CPUTIN | 43 °C |
-| 2-3 | 0 | nothing | 0xFF |
-| 4-5 | 31 | Virtual | 0xFF |
+| `systin`, `cputin` | 1, 2 | `0x490`, `0x491` | thermistors, unchanged meaning |
+| `auxtin0`–`auxtin4` | 3–7 | `0x492`–`0x496` | thermistor pins, wired or not |
+| `peci0cal`, `peci1cal` | 28, 29 | `0x4F4`, `0x4F5` | CPU-reported temperature |
+| `tsi0`, `tsi1` | — | `0x409`, `0x40B` | AMD SB-TSI, `(raw >> 5) * 0.125`, zero = absent |
 
-The BIOS points the CPU fan curves at **source 28** but never pointed a slot at it. The
-chip is *using* that temperature without *publishing* it. There is no register we can read
-to see the number the fans follow.
+CPUTIN loses its half-degree by moving from a word slot to a byte source register.
+Meaning that cannot drift outranks resolution a curve never used — the chip's own
+ladders are in whole degrees.
 
-Two conclusions, one uncomfortable:
+### How source 28 was pinned without writing anything
 
-1. **Our exposed inputs are not fixed-function.** `TEMP_INPUTS` calls `0x027`/`0x150`
-   SYSTIN/CPUTIN and the code comment claimed they were thermistor pins. They are slots
-   0 and 1, correct today only because the BIOS selected sources 1 and 2. The very risk the
-   comment warned about — a stable id whose meaning a BIOS update can change — applies to
-   what we already ship. The fix: key ids by source, check the select at read time, and
-   refuse the reading if the slot has been re-pointed. Not done yet; a fixture test now
-   pins the current selects so the assumption is at least checked against real bytes.
-2. **Reading source 28 requires a configuration write** — pointing an idle slot (2 or 3)
-   at it and reading that slot's value register. Small, reversible under record-before-
-   write, on a slot nothing uses. But it is a write to BIOS-set configuration, and it is
-   the first one of its kind, so it waits for a person. Which value register the idle
-   slots use on the 6798 needs the driver's NCT6779 monitor tables, not the NCT6775 ones
-   quoted above.
+Each fan channel has a monitor register (`0x73`…`0x7D`, and `0x4A0` for channel 6, which
+is a byte where the others are words) that displays whatever that channel's
+`REG_TEMP_SEL` selects. Across two captures four days apart:
 
-Until (2) is done, `offload` can produce a CPUTIN curve that the chip would follow a
-*different* temperature than the firmware does. That is a correctness gap, not a missing
-feature, and it is why exposing the CPU source is a prerequisite rather than a nicety.
+- channels 0, 1 and 4 select source 28; their monitors read 46.5 → 62.5 °C, and `0x4F4`
+  read 46 → 62 in step. Same thing, whole-degree.
+- channels 2, 3, 5 and 6 select source 3; their monitors read 67; `0x492` read 67 while
+  **no slot displayed source 3 at all** — the proof the alternate registers are
+  select-independent.
+
+So the earlier claim that reading source 28 "requires a configuration write" was wrong.
+It required the right address. The proposed experiment of pointing a spare slot at it was
+never needed and was not done.
+
+### Confirmed live
+
+Read off the running chip with the rebuilt dump tool (read-only), 2026-09-25, machine
+idle: SYSTIN 48, CPUTIN 45, AUXTIN0 67, AUXTIN1 48, AUXTIN2 21, AUXTIN3 70, AUXTIN4 48,
+PECI Agent 0 Calibration 48, PECI Agent 1 Calibration 47, SB-TSI 0 58.9, SB-TSI 1 47 °C.
+All eleven decode.
+
+An observation, not a claim: `peci0cal` sits about 11 °C below `tsi0` both under load
+(62 vs 73.4) and idle (48 vs 58.9). That is the shape of one being the CPU's raw report
+and the other a calibrated version of it. Which is which for a given board is not
+something to assert from two samples; both are exposed under the driver's names.
+
+### What this closes
+
+`offload` could previously produce a CPUTIN curve the chip would follow using a *different*
+temperature than the firmware does. Now `SmartFanCurve::followed_input()` names the exact
+graph input a chip curve follows, and the input the BIOS uses is bindable. The prerequisite
+in "What would have to be built" is met.
+
+The fan-channel monitors are deliberately *not* engine sensors — they follow
+configuration by design — but `read_followed_temp` exposes them as "what channel N is
+following right now", which is the check an offloaded curve needs afterwards.
 
 ## Persistence: the chip cannot keep it, and that is fine
 
@@ -236,10 +267,9 @@ not afterwards be reported as stranded by our own contention survey.
    you can restore it — now covers a dozen registers per channel instead of two. The
    recording burden grows with the register count and must not be skipped.
 4. **Re-apply at boot, and on resume if resume proves to reset the chip.**
-5. **Expose the monitored temperature sources**, at least the PECI one the BIOS uses for
-   CPU fans on this board. Without it, `offload` can produce a curve on CPUTIN that the
-   chip cannot follow the same way the firmware does — a correctness gap, not just a
-   missing feature.
+5. ~~**Expose the monitored temperature sources.**~~ **Done** — all eleven, read by
+   source at fixed addresses; see the section above. A chip curve can now name the graph
+   input it follows.
 6. **Interface**: the three states above, per channel, with the reason shown when a
    configuration cannot be offloaded.
 
