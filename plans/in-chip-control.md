@@ -100,6 +100,50 @@ board's intent.
 This is the same discipline already applied to the mode nibble — read it, record it, prove
 you can restore it — widened to the register set that describes a curve.
 
+## Why we do not read the temperature the BIOS curves against
+
+The chip has two namespaces that are easy to conflate:
+
+- **Sources** — a 5-bit index naming a physical or bus-fed temperature: thermistor pins
+  (SYSTIN, CPUTIN, AUXTIN0-4), CPU-reported temperature (the "PECI Agent" entries; on this
+  AMD board that path carries the CPU's own reading), SMBus and virtual sources.
+- **Monitored slots** — six value registers software can read (`0x027`, `0x150`, and four
+  more), each with a source-select register (`0x621..0x626`) saying which source it shows.
+
+Software reads *slots*. The fan-control block follows *sources* directly. Those are
+different paths, and the dump shows the consequence:
+
+| slot | select | shows | value |
+| --- | --- | --- | --- |
+| 0 (`0x027`) | 1 | SYSTIN | 44 °C |
+| 1 (`0x150`) | 2 | CPUTIN | 43 °C |
+| 2-3 | 0 | nothing | 0xFF |
+| 4-5 | 31 | Virtual | 0xFF |
+
+The BIOS points the CPU fan curves at **source 28** but never pointed a slot at it. The
+chip is *using* that temperature without *publishing* it. There is no register we can read
+to see the number the fans follow.
+
+Two conclusions, one uncomfortable:
+
+1. **Our exposed inputs are not fixed-function.** `TEMP_INPUTS` calls `0x027`/`0x150`
+   SYSTIN/CPUTIN and the code comment claimed they were thermistor pins. They are slots
+   0 and 1, correct today only because the BIOS selected sources 1 and 2. The very risk the
+   comment warned about — a stable id whose meaning a BIOS update can change — applies to
+   what we already ship. The fix: key ids by source, check the select at read time, and
+   refuse the reading if the slot has been re-pointed. Not done yet; a fixture test now
+   pins the current selects so the assumption is at least checked against real bytes.
+2. **Reading source 28 requires a configuration write** — pointing an idle slot (2 or 3)
+   at it and reading that slot's value register. Small, reversible under record-before-
+   write, on a slot nothing uses. But it is a write to BIOS-set configuration, and it is
+   the first one of its kind, so it waits for a person. Which value register the idle
+   slots use on the 6798 needs the driver's NCT6779 monitor tables, not the NCT6775 ones
+   quoted above.
+
+Until (2) is done, `offload` can produce a CPUTIN curve that the chip would follow a
+*different* temperature than the firmware does. That is a correctness gap, not a missing
+feature, and it is why exposing the CPU source is a prerequisite rather than a nicety.
+
 ## Persistence: the chip cannot keep it, and that is fine
 
 Those registers are volatile RAM. There is no user-writable non-volatile store for fan

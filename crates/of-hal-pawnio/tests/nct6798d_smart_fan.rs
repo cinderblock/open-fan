@@ -213,3 +213,40 @@ fn all_seven_channels_decode_from_a_full_capture() {
         );
     }
 }
+
+/// Source-select registers for the monitored temperature slots, per the driver's
+/// `NCT6775_REG_TEMP_SOURCE`. Slot 0 shows through `0x027`, slot 1 through `0x150` —
+/// the two registers `TEMP_INPUTS` exposes as SYSTIN and CPUTIN.
+const REG_TEMP_SOURCE: [u16; 6] = [0x621, 0x622, 0x623, 0x624, 0x625, 0x626];
+
+#[test]
+fn the_two_exposed_temperatures_are_slots_the_bios_pointed_at_thermistors() {
+    // TEMP_INPUTS calls 0x027 "SYSTIN" and 0x150 "CPUTIN". Those registers are monitored
+    // slots, and they show a thermistor only because the BIOS selected one. Pin the
+    // selects the capture saw so the assumption is at least checked against real bytes,
+    // and so a re-pointed BIOS on another board fails here rather than silently.
+    let regs = registers(FULL_FIXTURE);
+    let select = |slot: usize| regs[&REG_TEMP_SOURCE[slot]] & 0x1F;
+
+    assert_eq!(select(0), 1, "slot 0 (0x027) should show SYSTIN");
+    assert_eq!(temp_source_label(select(0)), Some("SYSTIN"));
+    assert_eq!(select(1), 2, "slot 1 (0x150) should show CPUTIN");
+    assert_eq!(temp_source_label(select(1)), Some("CPUTIN"));
+}
+
+#[test]
+fn the_temperature_the_bios_curves_against_is_not_displayed_in_any_slot() {
+    // The CPU fan curves follow source 28. If any monitored slot showed it we could read
+    // it directly; none does, which is why reading it would need a configuration write.
+    let regs = registers(FULL_FIXTURE);
+    let shown: Vec<u8> = REG_TEMP_SOURCE.iter().map(|&r| regs[&r] & 0x1F).collect();
+
+    assert!(
+        !shown.contains(&28),
+        "a slot shows source 28 after all — the plan's claim is stale: {shown:?}"
+    );
+    // The unused slots read as nothing or Virtual, with a 0xFF value: genuinely idle,
+    // so one of them is a candidate for pointing at source 28 later.
+    assert_eq!(shown[2], 0);
+    assert_eq!(shown[3], 0);
+}

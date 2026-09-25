@@ -349,11 +349,23 @@ pub struct TempInput {
 
 /// Temperature inputs exposed to the engine.
 ///
-/// Only the chip's **fixed-function** thermistor inputs are here. The NCT67xx also has
-/// six "monitored source" slots whose meaning is selected by configuration registers, and
-/// those are deliberately omitted: their id would be stable while their *meaning* was
-/// not, so a BIOS update could silently re-point a user's fan curve at a different
-/// sensor. Exposing them needs the source-select registers decoded first. See the plan.
+/// **These are not fixed-function pins, and an earlier version of this comment said they
+/// were.** Per the Linux `nct6775` driver, `0x027` and `0x150` are slots 0 and 1 of the
+/// chip's monitored-temperature table, each paired by index with a source-select register
+/// (`0x621`, `0x622`) whose low five bits name what the slot shows. On the reference
+/// board those select 1 (SYSTIN) and 2 (CPUTIN) — so the names are right, but right by
+/// BIOS configuration rather than by silicon. A BIOS update could re-point either slot and
+/// these ids would keep meaning the same thing while the reading meant something else.
+///
+/// The correct fix is to key an id by *source* and verify the select at read time,
+/// refusing the reading if the slot no longer shows the source the id names — the same
+/// "never substitute" rule the engine applies to a failed read. Not done yet; see
+/// `plans/in-chip-control.md`. The other four monitored slots are unused on this board
+/// (select 0 or Virtual, value 0xFF) and stay unexposed.
+///
+/// Separately: the temperature the BIOS *curves* against on the CPU-related channels is
+/// source 28 (`PECI Agent 0 Calibration`), which no slot displays. It can only be read by
+/// pointing a spare slot at it — a configuration write, deliberately not done here.
 pub const TEMP_INPUTS: [TempInput; 2] = [
     TempInput {
         key: "systin",
