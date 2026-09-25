@@ -58,6 +58,197 @@ pub const REG_PWM_WRITE: [u16; 7] = [0x109, 0x209, 0x309, 0x809, 0x909, 0xA09, 0
 /// tolerance setting belonging to the firmware, which must be preserved.
 pub const REG_FAN_MODE: [u16; 7] = [0x102, 0x202, 0x302, 0x802, 0x902, 0xA02, 0xB02];
 
+// --- SmartFan IV ----------------------------------------------------------------------
+//
+// The chip's own fan curve: what a BIOS programs, and what runs with no software at all.
+// Addresses are from the Linux `nct6775` driver, then checked against a register dump from
+// a real NCT6798D — see `tests/nct6798d_fixture.rs`.
+//
+// A lesson recorded rather than hidden: before consulting the driver, the curve was
+// "found" by shape at `0x?11..0x?14` / `0x?17..0x?1A`, where the dump shows a perfectly
+// plausible monotonic ladder. That region is *not* the SmartFan IV table — the driver puts
+// it at `0x?21` / `0x?27`, and re-reading the dump there gives a different, equally
+// plausible ladder. A convincing shape is not an address. What the `0x?1x` ladder is
+// remains unmapped, and nothing here pretends otherwise.
+
+/// Temperature/duty points per channel in SmartFan IV on this family.
+pub const SMART_FAN_POINTS: usize = 4;
+
+/// Which temperature a channel's curve follows: the low five bits index
+/// [`TEMP_SOURCE_LABELS`]. The high three bits are something else and must be preserved.
+pub const REG_TEMP_SEL: [u16; 7] = [0x100, 0x200, 0x300, 0x800, 0x900, 0xA00, 0xB00];
+
+/// Seconds-ish between duty steps when the target falls. Firmware-owned pacing.
+pub const REG_STEP_DOWN_TIME: [u16; 7] = [0x103, 0x203, 0x303, 0x803, 0x903, 0xA03, 0xB03];
+/// Pacing when the target rises.
+pub const REG_STEP_UP_TIME: [u16; 7] = [0x104, 0x204, 0x304, 0x804, 0x904, 0xA04, 0xB04];
+/// Duty below which the chip lets the fan stop.
+pub const REG_STOP_OUTPUT: [u16; 7] = [0x105, 0x205, 0x305, 0x805, 0x905, 0xA05, 0xB05];
+/// Duty the chip kicks a stopped fan with to start it.
+pub const REG_START_OUTPUT: [u16; 7] = [0x106, 0x206, 0x306, 0x806, 0x906, 0xA06, 0xB06];
+/// How long the chip waits at stop duty before deciding the fan has stopped.
+pub const REG_STOP_TIME: [u16; 7] = [0x107, 0x207, 0x307, 0x807, 0x907, 0xA07, 0xB07];
+/// Upper bits of the tolerance, paired with the low nibble of [`REG_FAN_MODE`].
+pub const REG_TOLERANCE_H: [u16; 7] = [0x10C, 0x20C, 0x30C, 0x80C, 0x90C, 0xA0C, 0xB0C];
+
+/// First of [`SMART_FAN_POINTS`] consecutive temperature registers, in whole degrees.
+pub const REG_AUTO_TEMP: [u16; 7] = [0x121, 0x221, 0x321, 0x821, 0x921, 0xA21, 0xB21];
+/// First of [`SMART_FAN_POINTS`] consecutive duty registers, 0-255. `0xFF` is full
+/// speed, not "unset": a curve whose upper points all read `0xFF` is one that reaches
+/// 100 % and stays there.
+pub const REG_AUTO_PWM: [u16; 7] = [0x127, 0x227, 0x327, 0x827, 0x927, 0xA27, 0xB27];
+
+/// Temperature at which the chip abandons the curve and goes to full speed.
+pub const REG_CRITICAL_TEMP: [u16; 7] = [0x135, 0x235, 0x335, 0x835, 0x935, 0xA35, 0xB35];
+/// Hysteresis on the critical temperature.
+pub const REG_CRITICAL_TEMP_TOLERANCE: [u16; 7] = [0x138, 0x238, 0x338, 0x838, 0x938, 0xA38, 0xB38];
+
+/// What the low five bits of [`REG_TEMP_SEL`] mean on the NCT6798D, from the driver's
+/// `nct6798_temp_label`. An empty string is a value the driver documents no meaning for.
+///
+/// Most of these are not fixed-function inputs: the "PECI", "SMBUSMASTER" and "Virtual"
+/// entries are *monitored* sources whose reading arrives through a bus, not a thermistor
+/// pin. On the reference machine — an AMD board — the BIOS drives its CPU-fan curve from
+/// index 28, which this table calls "PECI Agent 0 Calibration". That is evidently how the
+/// firmware routes CPU temperature on that platform, and it is a source this crate does
+/// not yet expose as a sensor. See `plans/in-chip-control.md`.
+pub const TEMP_SOURCE_LABELS: [&str; 32] = [
+    "",
+    "SYSTIN",
+    "CPUTIN",
+    "AUXTIN0",
+    "AUXTIN1",
+    "AUXTIN2",
+    "AUXTIN3",
+    "AUXTIN4",
+    "SMBUSMASTER 0",
+    "SMBUSMASTER 1",
+    "Virtual_TEMP",
+    "Virtual_TEMP",
+    "",
+    "",
+    "",
+    "",
+    "PECI Agent 0",
+    "PECI Agent 1",
+    "PCH_CHIP_CPU_MAX_TEMP",
+    "PCH_CHIP_TEMP",
+    "PCH_CPU_TEMP",
+    "PCH_MCH_TEMP",
+    "Agent0 Dimm0",
+    "Agent0 Dimm1",
+    "Agent1 Dimm0",
+    "Agent1 Dimm1",
+    "BYTE_TEMP0",
+    "BYTE_TEMP1",
+    "PECI Agent 0 Calibration",
+    "PECI Agent 1 Calibration",
+    "",
+    "Virtual_TEMP",
+];
+
+/// The name of a temperature source index, if the driver gives it one.
+pub fn temp_source_label(select: u8) -> Option<&'static str> {
+    let label = TEMP_SOURCE_LABELS[usize::from(select & 0x1F)];
+    (!label.is_empty()).then_some(label)
+}
+
+/// One point on a chip curve, as the chip stores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawCurvePoint {
+    /// Whole degrees Celsius.
+    pub temp_c: u8,
+    /// 0-255.
+    pub duty: u8,
+}
+
+/// Everything the chip knows about one channel's SmartFan IV behaviour.
+///
+/// This is also, exactly, **the set of registers that must be recorded before any of them
+/// is written**. Handing a channel back to the firmware is only an honest restore if every
+/// one of these goes back to what it was — which is why they travel as one value rather
+/// than being read piecemeal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmartFanCurve {
+    /// Raw [`REG_TEMP_SEL`] byte. The low five bits select the source; the rest is kept.
+    pub temp_sel: u8,
+    pub points: [RawCurvePoint; SMART_FAN_POINTS],
+    pub step_up_time: u8,
+    pub step_down_time: u8,
+    pub start_output: u8,
+    pub stop_output: u8,
+    pub stop_time: u8,
+    pub tolerance_h: u8,
+    pub critical_temp: u8,
+    pub critical_tolerance: u8,
+}
+
+impl SmartFanCurve {
+    /// Which temperature this curve follows, as an index into [`TEMP_SOURCE_LABELS`].
+    pub fn temp_source(&self) -> u8 {
+        self.temp_sel & 0x1F
+    }
+
+    /// Whether the temperatures rise (or hold) from point to point.
+    ///
+    /// The chip does not enforce this; a ladder that goes backwards is a sign of reading
+    /// the wrong registers, which is what this is used to catch in the fixture tests.
+    pub fn is_monotonic(&self) -> bool {
+        self.points.windows(2).all(|w| w[0].temp_c <= w[1].temp_c)
+    }
+}
+
+/// Every register describing `channel`'s curve, so a caller can record them as a set.
+pub fn smart_fan_registers(channel: usize) -> Vec<u16> {
+    let mut regs = vec![
+        REG_TEMP_SEL[channel],
+        REG_STEP_DOWN_TIME[channel],
+        REG_STEP_UP_TIME[channel],
+        REG_STOP_OUTPUT[channel],
+        REG_START_OUTPUT[channel],
+        REG_STOP_TIME[channel],
+        REG_TOLERANCE_H[channel],
+        REG_CRITICAL_TEMP[channel],
+        REG_CRITICAL_TEMP_TOLERANCE[channel],
+    ];
+    for point in 0..SMART_FAN_POINTS as u16 {
+        regs.push(REG_AUTO_TEMP[channel] + point);
+        regs.push(REG_AUTO_PWM[channel] + point);
+    }
+    regs
+}
+
+/// Decode a channel's curve through any byte reader — a fixture map in tests, the chip in
+/// the backend. `None` if any register was unavailable: a curve with a hole in it is not
+/// a curve, and filling the hole with a default is exactly the mistake this crate exists
+/// to refuse.
+pub fn decode_smart_fan_curve(
+    channel: usize,
+    mut read: impl FnMut(u16) -> Option<u8>,
+) -> Option<SmartFanCurve> {
+    let mut points = [RawCurvePoint { temp_c: 0, duty: 0 }; SMART_FAN_POINTS];
+    for (index, point) in points.iter_mut().enumerate() {
+        let offset = index as u16;
+        *point = RawCurvePoint {
+            temp_c: read(REG_AUTO_TEMP[channel] + offset)?,
+            duty: read(REG_AUTO_PWM[channel] + offset)?,
+        };
+    }
+
+    Some(SmartFanCurve {
+        temp_sel: read(REG_TEMP_SEL[channel])?,
+        points,
+        step_up_time: read(REG_STEP_UP_TIME[channel])?,
+        step_down_time: read(REG_STEP_DOWN_TIME[channel])?,
+        start_output: read(REG_START_OUTPUT[channel])?,
+        stop_output: read(REG_STOP_OUTPUT[channel])?,
+        stop_time: read(REG_STOP_TIME[channel])?,
+        tolerance_h: read(REG_TOLERANCE_H[channel])?,
+        critical_temp: read(REG_CRITICAL_TEMP[channel])?,
+        critical_tolerance: read(REG_CRITICAL_TEMP_TOLERANCE[channel])?,
+    })
+}
+
 /// How a channel decides its own duty.
 ///
 /// Anything other than [`Manual`](FanMode::Manual) means the chip is running one of its
@@ -337,6 +528,29 @@ impl Nct6775 {
         bus.pio_outb(self.addr_port(), (register as u8).wrapping_add(1))?;
         let low = bus.pio_inb(self.data_port())?;
         Ok((u16::from(high) << 8) | u16::from(low))
+    }
+
+    /// Read a channel's SmartFan IV configuration off the chip. Read-only.
+    pub fn read_smart_fan_curve(
+        &self,
+        bus: &Bus<'_>,
+        channel: usize,
+    ) -> Result<SmartFanCurve, LpcError> {
+        let mut failure = None;
+        let curve =
+            decode_smart_fan_curve(channel, |register| match self.read_byte(bus, register) {
+                Ok(value) => Some(value),
+                Err(e) => {
+                    failure.get_or_insert(e);
+                    None
+                }
+            });
+        match failure {
+            Some(e) => Err(e),
+            // The decoder returns None only after a read handed it None, which only
+            // happens once `failure` is set — so this `expect` cannot fire.
+            None => Ok(curve.expect("a curve decodes when every register read succeeded")),
+        }
     }
 
     /// Write one 8-bit register.
